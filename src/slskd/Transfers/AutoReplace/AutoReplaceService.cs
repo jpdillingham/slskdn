@@ -28,6 +28,43 @@ namespace slskd.Transfers.AutoReplace
     using Serilog;
     using slskd.Search;
     using Soulseek;
+    using SlskdTransfer = slskd.Transfers.Transfer;
+
+    /// <summary>
+    ///     Service for automatically replacing stuck downloads with alternative sources.
+    /// </summary>
+    public interface IAutoReplaceService
+    {
+        /// <summary>
+        ///     Gets all stuck downloads.
+        /// </summary>
+        /// <returns>A list of stuck downloads.</returns>
+        IEnumerable<SlskdTransfer> GetStuckDownloads();
+
+        /// <summary>
+        ///     Finds alternative sources for a download.
+        /// </summary>
+        /// <param name="request">The request containing download details.</param>
+        /// <param name="cancellationToken">Cancellation token.</param>
+        /// <returns>A list of alternative candidates.</returns>
+        Task<List<AlternativeCandidate>> FindAlternativesAsync(FindAlternativeRequest request, CancellationToken cancellationToken = default);
+
+        /// <summary>
+        ///     Replaces a stuck download with an alternative source.
+        /// </summary>
+        /// <param name="request">The replacement request.</param>
+        /// <param name="cancellationToken">Cancellation token.</param>
+        /// <returns>True if replacement was successful.</returns>
+        Task<bool> ReplaceDownloadAsync(ReplaceDownloadRequest request, CancellationToken cancellationToken = default);
+
+        /// <summary>
+        ///     Processes all stuck downloads and attempts auto-replacement.
+        /// </summary>
+        /// <param name="request">The auto-replace request.</param>
+        /// <param name="cancellationToken">Cancellation token.</param>
+        /// <returns>The result of the auto-replace operation.</returns>
+        Task<AutoReplaceResult> ProcessStuckDownloadsAsync(AutoReplaceRequest request, CancellationToken cancellationToken = default);
+    }
 
     /// <summary>
     ///     Request for finding an alternative source for a download.
@@ -197,38 +234,12 @@ namespace slskd.Transfers.AutoReplace
         /// <summary>
         ///     Gets or sets the user's queue length.
         /// </summary>
-        public int QueueLength { get; set; }
+        public long QueueLength { get; set; }
 
         /// <summary>
         ///     Gets or sets the user's upload speed.
         /// </summary>
         public int UploadSpeed { get; set; }
-    }
-
-    /// <summary>
-    ///     Service for automatically replacing stuck downloads with alternative sources.
-    /// </summary>
-    public interface IAutoReplaceService
-    {
-        /// <summary>
-        ///     Gets all stuck downloads.
-        /// </summary>
-        IEnumerable<Transfer> GetStuckDownloads();
-
-        /// <summary>
-        ///     Finds alternative sources for a download.
-        /// </summary>
-        Task<List<AlternativeCandidate>> FindAlternativesAsync(FindAlternativeRequest request, CancellationToken cancellationToken = default);
-
-        /// <summary>
-        ///     Replaces a stuck download with an alternative source.
-        /// </summary>
-        Task<bool> ReplaceDownloadAsync(ReplaceDownloadRequest request, CancellationToken cancellationToken = default);
-
-        /// <summary>
-        ///     Processes all stuck downloads and attempts auto-replacement.
-        /// </summary>
-        Task<AutoReplaceResult> ProcessStuckDownloadsAsync(AutoReplaceRequest request, CancellationToken cancellationToken = default);
     }
 
     /// <summary>
@@ -244,11 +255,18 @@ namespace slskd.Transfers.AutoReplace
             TransferStates.Completed | TransferStates.Cancelled,
         };
 
+        /// <summary>
+        ///     Initializes a new instance of the <see cref="AutoReplaceService"/> class.
+        /// </summary>
+        /// <param name="transferService">The transfer service.</param>
+        /// <param name="searchService">The search service.</param>
+        /// <param name="soulseekClient">The Soulseek client.</param>
+        /// <param name="optionsMonitor">The options monitor.</param>
         public AutoReplaceService(
             ITransferService transferService,
             ISearchService searchService,
             ISoulseekClient soulseekClient,
-            IOptionsMonitor<Options> optionsMonitor)
+            IOptionsMonitor<slskd.Options> optionsMonitor)
         {
             Transfers = transferService;
             Searches = searchService;
@@ -257,13 +275,17 @@ namespace slskd.Transfers.AutoReplace
         }
 
         private ITransferService Transfers { get; }
+
         private ISearchService Searches { get; }
+
         private ISoulseekClient Client { get; }
-        private IOptionsMonitor<Options> OptionsMonitor { get; }
+
+        private IOptionsMonitor<slskd.Options> OptionsMonitor { get; }
+
         private ILogger Log { get; } = Serilog.Log.ForContext<AutoReplaceService>();
 
         /// <inheritdoc/>
-        public IEnumerable<Transfer> GetStuckDownloads()
+        public IEnumerable<SlskdTransfer> GetStuckDownloads()
         {
             return Transfers.Downloads.List(t =>
                 StuckStates.Any(s => t.State == s));
@@ -287,7 +309,7 @@ namespace slskd.Transfers.AutoReplace
             Log.Information("Searching for alternative sources for: {SearchText}", searchText);
 
             var searchId = Guid.NewGuid();
-            var searchOptions = new SearchOptions(
+            var searchOptions = new Soulseek.SearchOptions(
                 searchTimeout: 15000,
                 responseLimit: 100,
                 fileLimit: 1000);
@@ -318,22 +340,31 @@ namespace slskd.Transfers.AutoReplace
                 {
                     // Skip the original source
                     if (response.Username.Equals(request.Username, StringComparison.OrdinalIgnoreCase))
+                    {
                         continue;
+                    }
 
-                    foreach (var file in response.Files ?? Enumerable.Empty<Soulseek.File>())
+                    foreach (var file in response.Files)
                     {
                         // Check extension match
-                        var fileExt = Path.GetExtension(file.Filename)?.TrimStart('.').ToLowerInvariant();
+                        var fileExt = file.Extension?.ToLowerInvariant();
                         if (!string.IsNullOrEmpty(expectedExt) && fileExt != expectedExt)
+                        {
                             continue;
+                        }
 
                         // Check size difference
                         if (file.Size <= 0)
+                        {
                             continue;
+                        }
 
                         var sizeDiff = Math.Abs(file.Size - request.Size) / (double)request.Size * 100;
-                        if (sizeDiff > request.Threshold * 2) // Pre-filter at 2x threshold
+                        if (sizeDiff > request.Threshold * 2)
+                        {
+                            // Pre-filter at 2x threshold
                             continue;
+                        }
 
                         candidates.Add(new AlternativeCandidate
                         {
@@ -384,8 +415,10 @@ namespace slskd.Transfers.AutoReplace
                 Transfers.Downloads.TryCancel(originalGuid);
                 Transfers.Downloads.Remove(originalGuid);
 
-                Log.Information("Removed stuck download from {Username}: {Filename}",
-                    request.OriginalUsername, request.NewFilename);
+                Log.Information(
+                    "Removed stuck download from {Username}: {Filename}",
+                    request.OriginalUsername,
+                    request.NewFilename);
 
                 // Enqueue the new download
                 var (enqueued, failed) = await Transfers.Downloads.EnqueueAsync(
@@ -393,16 +426,20 @@ namespace slskd.Transfers.AutoReplace
                     new[] { (request.NewFilename, request.NewSize) },
                     cancellationToken);
 
-                if (enqueued > 0)
+                if (enqueued.Count > 0)
                 {
-                    Log.Information("Enqueued replacement download from {Username}: {Filename}",
-                        request.NewUsername, request.NewFilename);
+                    Log.Information(
+                        "Enqueued replacement download from {Username}: {Filename}",
+                        request.NewUsername,
+                        request.NewFilename);
                     return true;
                 }
                 else
                 {
-                    Log.Warning("Failed to enqueue replacement download from {Username}: {Filename}",
-                        request.NewUsername, request.NewFilename);
+                    Log.Warning(
+                        "Failed to enqueue replacement download from {Username}: {Filename}",
+                        request.NewUsername,
+                        request.NewFilename);
                     return false;
                 }
             }
@@ -421,7 +458,7 @@ namespace slskd.Transfers.AutoReplace
             var result = new AutoReplaceResult();
 
             var stuckDownloads = GetStuckDownloads().ToList();
-            if (!stuckDownloads.Any())
+            if (stuckDownloads.Count == 0)
             {
                 Log.Debug("No stuck downloads to process");
                 return result;
@@ -435,14 +472,17 @@ namespace slskd.Transfers.AutoReplace
             foreach (var download in stuckDownloads)
             {
                 if (cancellationToken.IsCancellationRequested)
+                {
                     break;
+                }
 
-                var trackKey = $"{download.Filename.ToLowerInvariant()}";
+                var trackKey = download.Filename.ToLowerInvariant();
                 if (processedTracks.Contains(trackKey))
                 {
                     result.Skipped++;
                     continue;
                 }
+
                 processedTracks.Add(trackKey);
 
                 var detail = new ReplacementDetail
@@ -454,13 +494,15 @@ namespace slskd.Transfers.AutoReplace
                 try
                 {
                     // Find alternatives
-                    var alternatives = await FindAlternativesAsync(new FindAlternativeRequest
-                    {
-                        Username = download.Username,
-                        Filename = download.Filename,
-                        Size = download.Size,
-                        Threshold = request.Threshold,
-                    }, cancellationToken);
+                    var alternatives = await FindAlternativesAsync(
+                        new FindAlternativeRequest
+                        {
+                            Username = download.Username,
+                            Filename = download.Filename,
+                            Size = download.Size,
+                            Threshold = request.Threshold,
+                        },
+                        cancellationToken);
 
                     // Find the best candidate within threshold
                     var bestCandidate = alternatives
@@ -480,21 +522,26 @@ namespace slskd.Transfers.AutoReplace
                     detail.SizeDiffPercent = bestCandidate.SizeDiffPercent;
 
                     // Replace the download
-                    var replaced = await ReplaceDownloadAsync(new ReplaceDownloadRequest
-                    {
-                        OriginalId = download.Id.ToString(),
-                        OriginalUsername = download.Username,
-                        NewUsername = bestCandidate.Username,
-                        NewFilename = bestCandidate.Filename,
-                        NewSize = bestCandidate.Size,
-                    }, cancellationToken);
+                    var replaced = await ReplaceDownloadAsync(
+                        new ReplaceDownloadRequest
+                        {
+                            OriginalId = download.Id.ToString(),
+                            OriginalUsername = download.Username,
+                            NewUsername = bestCandidate.Username,
+                            NewFilename = bestCandidate.Filename,
+                            NewSize = bestCandidate.Size,
+                        },
+                        cancellationToken);
 
                     if (replaced)
                     {
                         detail.Success = true;
                         result.Replaced++;
-                        Log.Information("Replaced stuck download: {Original} -> {New} (size diff: {Diff:F1}%)",
-                            download.Filename, bestCandidate.Filename, bestCandidate.SizeDiffPercent);
+                        Log.Information(
+                            "Replaced stuck download: {Original} -> {New} (size diff: {Diff:F1}%)",
+                            download.Filename,
+                            bestCandidate.Filename,
+                            bestCandidate.SizeDiffPercent);
                     }
                     else
                     {
@@ -515,8 +562,11 @@ namespace slskd.Transfers.AutoReplace
                 await Task.Delay(500, cancellationToken);
             }
 
-            Log.Information("Auto-replace completed: {Replaced} replaced, {Failed} failed, {Skipped} skipped",
-                result.Replaced, result.Failed, result.Skipped);
+            Log.Information(
+                "Auto-replace completed: {Replaced} replaced, {Failed} failed, {Skipped} skipped",
+                result.Replaced,
+                result.Failed,
+                result.Skipped);
 
             return result;
         }
@@ -524,10 +574,14 @@ namespace slskd.Transfers.AutoReplace
         /// <summary>
         ///     Clean a track title for searching.
         /// </summary>
+        /// <param name="filename">The filename to clean.</param>
+        /// <returns>A cleaned search-friendly title.</returns>
         private static string CleanTrackTitle(string filename)
         {
             if (string.IsNullOrEmpty(filename))
+            {
                 return string.Empty;
+            }
 
             // Extract just the filename
             var name = Path.GetFileNameWithoutExtension(filename);
@@ -536,11 +590,11 @@ namespace slskd.Transfers.AutoReplace
             name = name.Replace("_", " ");
 
             // Strip quality/bitrate info
-            name = Regex.Replace(name, @"\s*\(?\[?(?:FLAC|MP3|AAC|ALAC|WAV|OGG|WMA)[\s\d]*(?:kbps|kHz|bit)?\]?\)?", "", RegexOptions.IgnoreCase);
-            name = Regex.Replace(name, @"\s*\(?\[?\d+\s*kbps\]?\)?", "", RegexOptions.IgnoreCase);
+            name = Regex.Replace(name, @"\s*\(?\[?(?:FLAC|MP3|AAC|ALAC|WAV|OGG|WMA)[\s\d]*(?:kbps|kHz|bit)?\]?\)?", string.Empty, RegexOptions.IgnoreCase);
+            name = Regex.Replace(name, @"\s*\(?\[?\d+\s*kbps\]?\)?", string.Empty, RegexOptions.IgnoreCase);
 
             // Strip leading track numbers: "01 - Song" or "01. Song"
-            name = Regex.Replace(name, @"^[0-9]{1,4}[\s.\-)_]+", "");
+            name = Regex.Replace(name, @"^[0-9]{1,4}[\s.\-)_]+", string.Empty);
 
             // Strip year patterns
             name = Regex.Replace(name, @"\s*[\(\[]?\d{4}[\)\]]?\s*", " ");
@@ -555,4 +609,3 @@ namespace slskd.Transfers.AutoReplace
         }
     }
 }
-

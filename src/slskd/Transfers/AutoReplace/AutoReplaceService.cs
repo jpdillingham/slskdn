@@ -322,50 +322,79 @@ namespace slskd.Transfers.AutoReplace
                     SearchScope.Network,
                     searchOptions);
 
-                // Wait for search to complete
-                await Task.Delay(Math.Min(searchOptions.SearchTimeout, 15000), cancellationToken);
+                // Poll for search completion with timeout
+                var maxWait = TimeSpan.FromMilliseconds(searchOptions.SearchTimeout + 5000);
+                var pollInterval = TimeSpan.FromMilliseconds(500);
+                var waited = TimeSpan.Zero;
+                slskd.Search.Search searchWithResponses = null;
 
-                // Fetch search results
-                var searchWithResponses = await Searches.FindAsync(s => s.Id == searchId, includeResponses: true);
-                if (searchWithResponses?.Responses == null)
+                while (waited < maxWait)
                 {
-                    Log.Warning("No search responses found for: {SearchText}", searchText);
+                    await Task.Delay(pollInterval, cancellationToken);
+                    waited += pollInterval;
+
+                    searchWithResponses = await Searches.FindAsync(s => s.Id == searchId, includeResponses: true);
+                    if (searchWithResponses?.State.HasFlag(SearchStates.Completed) == true)
+                    {
+                        Log.Debug("Search {Id} completed after {WaitMs}ms with state: {State}, responses: {ResponseCount}",
+                            searchId,
+                            waited.TotalMilliseconds,
+                            searchWithResponses.State,
+                            searchWithResponses.Responses?.Count() ?? 0);
+                        break;
+                    }
+                }
+
+                if (searchWithResponses?.Responses == null || !searchWithResponses.Responses.Any())
+                {
+                    Log.Warning("No search responses found for: {SearchText} (search state: {State})",
+                        searchText,
+                        searchWithResponses?.State.ToString() ?? "null");
                     return candidates;
                 }
 
-                // Get expected extension
-                var expectedExt = Path.GetExtension(request.Filename)?.TrimStart('.').ToLowerInvariant();
+                // Get expected extension - handle Windows paths on Linux
+                var expectedExt = GetExtension(request.Filename)?.ToLowerInvariant();
+                Log.Debug("Looking for files with extension: {Extension}, original size: {Size}", expectedExt, request.Size);
 
                 foreach (var response in searchWithResponses.Responses)
                 {
                     // Skip the original source
                     if (response.Username.Equals(request.Username, StringComparison.OrdinalIgnoreCase))
                     {
+                        Log.Debug("Skipping original source: {Username}", response.Username);
                         continue;
                     }
 
+                    Log.Debug("Checking response from {Username} with {FileCount} files", response.Username, response.Files.Count());
+
                     foreach (var file in response.Files)
                     {
-                        // Check extension match
-                        var fileExt = file.Extension?.ToLowerInvariant();
-                        if (!string.IsNullOrEmpty(expectedExt) && fileExt != expectedExt)
+                        // Check extension match - use our cross-platform extension getter
+                        var fileExt = GetExtension(file.Filename)?.ToLowerInvariant();
+                        Log.Debug("  File: {Filename}, ext: {Ext}, size: {Size}", file.Filename, fileExt ?? "null", file.Size);
+
+                        if (!string.IsNullOrEmpty(expectedExt) && !string.IsNullOrEmpty(fileExt) && fileExt != expectedExt)
                         {
+                            Log.Debug("    Skipped: extension mismatch ({FileExt} != {ExpectedExt})", fileExt, expectedExt);
                             continue;
                         }
 
                         // Check size difference
                         if (file.Size <= 0)
                         {
+                            Log.Debug("    Skipped: zero or negative size");
                             continue;
                         }
 
                         var sizeDiff = Math.Abs(file.Size - request.Size) / (double)request.Size * 100;
                         if (sizeDiff > request.Threshold * 2)
                         {
-                            // Pre-filter at 2x threshold
+                            Log.Debug("    Skipped: size diff {Diff:F1}% > threshold {Threshold}%", sizeDiff, request.Threshold * 2);
                             continue;
                         }
 
+                        Log.Debug("    ACCEPTED: size diff {Diff:F1}%", sizeDiff);
                         candidates.Add(new AlternativeCandidate
                         {
                             Username = response.Username,
@@ -583,8 +612,22 @@ namespace slskd.Transfers.AutoReplace
                 return string.Empty;
             }
 
-            // Extract just the filename
-            var name = Path.GetFileNameWithoutExtension(filename);
+            // Handle both Windows and Unix path separators
+            var name = filename;
+            var lastBackslash = name.LastIndexOf('\\');
+            var lastSlash = name.LastIndexOf('/');
+            var lastSep = Math.Max(lastBackslash, lastSlash);
+            if (lastSep >= 0)
+            {
+                name = name.Substring(lastSep + 1);
+            }
+
+            // Remove extension
+            var lastDot = name.LastIndexOf('.');
+            if (lastDot > 0)
+            {
+                name = name.Substring(0, lastDot);
+            }
 
             // Replace underscores with spaces
             name = name.Replace("_", " ");
@@ -606,6 +649,32 @@ namespace slskd.Transfers.AutoReplace
             name = name.Trim('-', ' ');
 
             return name;
+        }
+
+        /// <summary>
+        ///     Get file extension handling both Windows and Unix paths.
+        /// </summary>
+        /// <param name="filename">The filename or path.</param>
+        /// <returns>The extension without the leading dot, or null if none.</returns>
+        private static string GetExtension(string filename)
+        {
+            if (string.IsNullOrEmpty(filename))
+            {
+                return null;
+            }
+
+            // Find the last dot after the last path separator
+            var lastBackslash = filename.LastIndexOf('\\');
+            var lastSlash = filename.LastIndexOf('/');
+            var lastSep = Math.Max(lastBackslash, lastSlash);
+            var lastDot = filename.LastIndexOf('.');
+
+            if (lastDot > lastSep && lastDot < filename.Length - 1)
+            {
+                return filename.Substring(lastDot + 1);
+            }
+
+            return null;
         }
     }
 }

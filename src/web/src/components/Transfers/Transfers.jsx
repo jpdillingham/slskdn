@@ -15,7 +15,7 @@ import { LoaderSegment, PlaceholderSegment } from '../Shared';
 import TransferGroup from './TransferGroup';
 import TransfersHeader from './TransfersHeader';
 
-const AUTO_REPLACE_INTERVAL_MS = 30_000; // Check every 30 seconds
+const AUTO_REPLACE_INTERVAL_MS = 30000; // Check every 30 seconds
 const AUTO_REPLACE_THRESHOLD = 5; // 5% size difference threshold
 
 const Transfers = ({ direction, server }) => {

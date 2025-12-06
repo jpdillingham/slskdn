@@ -73,7 +73,7 @@ export const getResponses = async ({ id }) => {
 
   if (!Array.isArray(response)) {
     console.warn('got non-array response from searches API', response);
-    return undefined;
+    return [];
   }
 
   return response;

@@ -24,10 +24,17 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Set up .NET
+      - name: Set up .NET (GitHub-hosted)
+        if: ${{ !contains(runner.name, 'keith') }}
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Verify .NET (self-hosted)
+        if: ${{ contains(runner.name, 'keith') }}
+        run: |
+          echo "Using pre-installed .NET SDK"
+          dotnet --version
 
       - name: Set Environment Variables
         id: version
@@ -73,10 +80,15 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Set up .NET
+      - name: Set up .NET (GitHub-hosted)
+        if: ${{ !contains(runner.name, 'keith') }}
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Verify .NET (self-hosted)
+        if: ${{ contains(runner.name, 'keith') }}
+        run: dotnet --version
 
       - name: Set Environment Variables
         run: |

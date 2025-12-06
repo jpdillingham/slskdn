@@ -30,9 +30,16 @@ jobs:
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
       - name: Download Release Asset
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          curl -sL "https://github.com/snapetech/slskdn/releases/download/${{ steps.version.outputs.tag }}/slskdn-${{ steps.version.outputs.tag }}-linux-x64.zip" -o slskdn.zip
-          unzip slskdn.zip -d slskdn-build
+          set -e
+          curl -fL \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/octet-stream" \
+            "https://github.com/snapetech/slskdn/releases/download/${{ steps.version.outputs.tag }}/slskdn-${{ steps.version.outputs.tag }}-linux-x64.zip" \
+            -o slskdn.zip
+          unzip -q slskdn.zip -d slskdn-build
 
       - name: Install Build Dependencies
         run: |
@@ -99,9 +106,16 @@ jobs:
         run: rpmdev-setuptree
 
       - name: Download Release Asset and Setup Sources
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          set -e
           # Download the zip - keep original tag-format filename
-          curl -sL "https://github.com/snapetech/slskdn/releases/download/${{ steps.version.outputs.tag }}/slskdn-${{ steps.version.outputs.tag }}-linux-x64.zip" -o ~/rpmbuild/SOURCES/slskdn-${{ steps.version.outputs.tag }}-linux-x64.zip
+          curl -fL \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/octet-stream" \
+            "https://github.com/snapetech/slskdn/releases/download/${{ steps.version.outputs.tag }}/slskdn-${{ steps.version.outputs.tag }}-linux-x64.zip" \
+            -o ~/rpmbuild/SOURCES/slskdn-${{ steps.version.outputs.tag }}-linux-x64.zip
           
           # Copy supporting files to SOURCES
           cp packaging/aur/slskd.service ~/rpmbuild/SOURCES/

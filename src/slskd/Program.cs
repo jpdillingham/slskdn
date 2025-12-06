@@ -667,10 +667,21 @@ namespace slskd
             services.AddSingleton<Transfers.AutoReplace.IAutoReplaceService, Transfers.AutoReplace.AutoReplaceService>();
 
             // Wishlist services
+            var wishlistDbPath = Path.Combine(Program.AppDirectory, "wishlist.db");
             services.AddDbContextFactory<Wishlist.WishlistDbContext>(options =>
             {
-                options.UseSqlite($"Data Source={Path.Combine(Program.AppDirectory, "wishlist.db")}");
+                options.UseSqlite($"Data Source={wishlistDbPath}");
             });
+
+            // Ensure wishlist database is created
+            using (var wishlistContext = new Wishlist.WishlistDbContext(
+                new DbContextOptionsBuilder<Wishlist.WishlistDbContext>()
+                    .UseSqlite($"Data Source={wishlistDbPath}")
+                    .Options))
+            {
+                wishlistContext.Database.EnsureCreated();
+            }
+
             services.AddSingleton<Wishlist.IWishlistService, Wishlist.WishlistService>();
             services.AddHostedService(provider => (Wishlist.WishlistService)provider.GetRequiredService<Wishlist.IWishlistService>());
 

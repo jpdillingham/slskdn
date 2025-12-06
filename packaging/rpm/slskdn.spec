@@ -14,6 +14,10 @@ BuildArch:      x86_64
 BuildRequires:  systemd-rpm-macros
 Requires:       systemd
 Provides:       slskd
+
+# Disable debuginfo - this is a pre-built .NET binary
+%global debug_package %{nil}
+%define __strip /bin/true
 Conflicts:      slskd
 Obsoletes:      slskd < %{version}
 

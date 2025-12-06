@@ -748,11 +748,19 @@ namespace slskd.Transfers.Downloads
                             System.IO.File.Delete(localFilename);
                             Log.Information("Deleted file {Filename} for removed download {Id}", localFilename, id);
 
+                            // Recursively delete empty parent directories up to base directory
                             var directory = System.IO.Path.GetDirectoryName(localFilename);
-                            if (System.IO.Directory.Exists(directory) && !System.IO.Directory.EnumerateFileSystemEntries(directory).Any())
+                            var normalizedBase = System.IO.Path.GetFullPath(baseDirectory);
+
+                            while (!string.IsNullOrEmpty(directory) &&
+                                   System.IO.Directory.Exists(directory) &&
+                                   !System.IO.Directory.EnumerateFileSystemEntries(directory).Any() &&
+                                   System.IO.Path.GetFullPath(directory) != normalizedBase &&
+                                   System.IO.Path.GetFullPath(directory).StartsWith(normalizedBase))
                             {
                                 System.IO.Directory.Delete(directory);
                                 Log.Debug("Deleted empty directory {Directory}", directory);
+                                directory = System.IO.Path.GetDirectoryName(directory);
                             }
                         }
                         else

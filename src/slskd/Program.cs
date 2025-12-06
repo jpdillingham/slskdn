@@ -666,6 +666,14 @@ namespace slskd
             services.AddSingleton<FileService>();
             services.AddSingleton<Transfers.AutoReplace.IAutoReplaceService, Transfers.AutoReplace.AutoReplaceService>();
 
+            // Wishlist services
+            services.AddDbContextFactory<Wishlist.WishlistDbContext>(options =>
+            {
+                options.UseSqlite($"Data Source={Path.Combine(Program.AppDirectory, "wishlist.db")}");
+            });
+            services.AddSingleton<Wishlist.IWishlistService, Wishlist.WishlistService>();
+            services.AddHostedService(provider => (Wishlist.WishlistService)provider.GetRequiredService<Wishlist.IWishlistService>());
+
             services.AddSingleton<IRelayService, RelayService>();
 
             services.AddSingleton<IFTPClientFactory, FTPClientFactory>();

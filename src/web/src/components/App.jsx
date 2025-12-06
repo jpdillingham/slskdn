@@ -16,6 +16,7 @@ import ErrorSegment from './Shared/ErrorSegment';
 import System from './System/System';
 import Transfers from './Transfers/Transfers';
 import Users from './Users/Users';
+import Wishlist from './Wishlist/Wishlist';
 import React, { Component } from 'react';
 import { Link, Redirect, Route, Switch } from 'react-router-dom';
 import { ToastContainer } from 'react-toastify';
@@ -381,6 +382,12 @@ class App extends Component {
                     Search
                   </Menu.Item>
                 </Link>
+                <Link to={`${urlBase}/wishlist`}>
+                  <Menu.Item>
+                    <Icon name="star" />
+                    Wishlist
+                  </Menu.Item>
+                </Link>
                 <Link to={`${urlBase}/downloads`}>
                   <Menu.Item>
                     <Icon name="download" />
@@ -558,6 +565,16 @@ class App extends Component {
                             server={applicationState.server}
                             {...props}
                           />
+                        </div>,
+                      )
+                    }
+                  />
+                  <Route
+                    path={`${urlBase}/wishlist`}
+                    render={(props) =>
+                      this.withTokenCheck(
+                        <div className="view">
+                          <Wishlist {...props} />
                         </div>,
                       )
                     }

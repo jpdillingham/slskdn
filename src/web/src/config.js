@@ -1,7 +1,7 @@
 const urlBase = (window.urlBase === '/' ? '' : window.urlBase) || '';
-// eslint-disable-next-line n/no-process-env
-const developmentPort = window.port ??
-  (process.env.REACT_APP_SLSKD_PORT || 5030);
+const developmentPort =
+  // eslint-disable-next-line n/no-process-env
+  window.port ?? (process.env.REACT_APP_SLSKD_PORT || 5_030);
 const rootUrl =
   // eslint-disable-next-line n/no-process-env
   process.env.NODE_ENV === 'production'

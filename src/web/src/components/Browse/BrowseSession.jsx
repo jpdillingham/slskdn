@@ -20,7 +20,6 @@ const initialState = {
     lockedDirectories: 0,
     lockedFiles: 0,
   },
-  interval: undefined,
   selectedDirectory: {},
   selectedFiles: [],
   separator: '\\',
@@ -33,14 +32,10 @@ class BrowseSession extends Component {
     super(props);
 
     this.state = initialState;
+    this.pollInterval = null;
   }
 
   componentDidMount() {
-    this.fetchStatus();
-    this.setState({
-      interval: window.setInterval(this.fetchStatus, 500),
-    });
-
     // Check for username from props (tab only - navigation handled by parent)
     const userToBrowse = this.props.username;
 
@@ -64,12 +59,41 @@ class BrowseSession extends Component {
     }
 
     document.addEventListener('keyup', this.keyUp, false);
+    document.addEventListener('visibilitychange', this.handleVisibilityChange);
   }
 
   componentWillUnmount() {
-    clearInterval(this.state.interval);
+    this.stopPolling();
     document.removeEventListener('keyup', this.keyUp, false);
+    document.removeEventListener(
+      'visibilitychange',
+      this.handleVisibilityChange,
+    );
   }
+
+  // Start polling only when needed (during active browse)
+  startPolling = () => {
+    if (!this.pollInterval) {
+      this.pollInterval = window.setInterval(this.fetchStatus, 500);
+    }
+  };
+
+  // Stop polling when not needed
+  stopPolling = () => {
+    if (this.pollInterval) {
+      clearInterval(this.pollInterval);
+      this.pollInterval = null;
+    }
+  };
+
+  // Pause polling when page is hidden to save resources
+  handleVisibilityChange = () => {
+    if (document.hidden) {
+      this.stopPolling();
+    } else if (this.state.browseState === 'pending') {
+      this.startPolling();
+    }
+  };
 
   browse = () => {
     const username = this.inputtext.inputRef.current.value;
@@ -86,6 +110,9 @@ class BrowseSession extends Component {
     this.setState(
       { browseError: undefined, browseState: 'pending', username },
       () => {
+        // Start polling only while browse is in progress
+        this.startPolling();
+
         users
           .browse({ username })
           .then((response) => {
@@ -127,22 +154,27 @@ class BrowseSession extends Component {
               tree: this.getDirectoryTree({ directories, separator }),
             });
           })
-          .then(() =>
+          .then(() => {
+            // Stop polling when browse completes
+            this.stopPolling();
             this.setState(
               { browseError: undefined, browseState: 'complete' },
               () => {
                 this.saveState();
               },
-            ),
-          )
-          .catch((error) =>
-            this.setState({ browseError: error, browseState: 'error' }),
-          );
+            );
+          })
+          .catch((error) => {
+            // Stop polling on error too
+            this.stopPolling();
+            this.setState({ browseError: error, browseState: 'error' });
+          });
       },
     );
   };
 
   clear = () => {
+    this.stopPolling();
     this.setState(initialState, () => {
       this.saveState();
       this.inputtext.focus();
@@ -189,11 +221,10 @@ class BrowseSession extends Component {
 
         if (savedState && savedState.tree && savedState.tree.length > 0) {
           // We have cached data - use it instead of re-fetching
-          this.setState((previousState) => ({
+          this.setState({
             ...savedState,
             browseState: 'complete',
-            interval: previousState.interval,
-          }));
+          });
           return true; // Indicate we loaded cached data
         }
       } catch {

@@ -106,9 +106,12 @@ const Browse = () => {
       const existingIndex = tabs.findIndex((t) => t.username === user);
 
       if (existingIndex === -1) {
-        // Create new tab for this user
-        setTabs((previous) => [...previous, createTab(user)]);
-        setActiveIndex(tabs.length);
+        // Create new tab for this user - use callback to get correct index
+        setTabs((previous) => {
+          const newTabs = [...previous, createTab(user)];
+          setActiveIndex(newTabs.length - 1);
+          return newTabs;
+        });
       } else {
         setActiveIndex(existingIndex);
       }
@@ -120,8 +123,11 @@ const Browse = () => {
   }, [location.state]);
 
   const handleAddTab = () => {
-    setTabs((previous) => [...previous, createTab()]);
-    setActiveIndex(tabs.length);
+    setTabs((previous) => {
+      const newTabs = [...previous, createTab()];
+      setActiveIndex(newTabs.length - 1);
+      return newTabs;
+    });
   };
 
   const panes = tabs.map((tab) => ({

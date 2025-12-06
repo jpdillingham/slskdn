@@ -7,7 +7,6 @@ import Directory from './Directory';
 import DirectoryTree from './DirectoryTree';
 import * as lzString from 'lz-string';
 import React, { Component } from 'react';
-import { withRouter } from 'react-router-dom';
 import { toast } from 'react-toastify';
 import { Card, Icon, Input, Loader, Segment } from 'semantic-ui-react';
 
@@ -69,7 +68,6 @@ class BrowseSession extends Component {
 
   componentWillUnmount() {
     clearInterval(this.state.interval);
-    this.setState({ interval: undefined });
     document.removeEventListener('keyup', this.keyUp, false);
   }
 
@@ -483,4 +481,4 @@ class BrowseSession extends Component {
   }
 }
 
-export default withRouter(BrowseSession);
+export default BrowseSession;

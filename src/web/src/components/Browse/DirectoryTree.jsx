@@ -173,12 +173,13 @@ const DirectoryTree = ({
   );
 
   const handleDownloadSelected = useCallback(() => {
-    // Find all selected directories from the tree
+    // Find all selected directories from the tree (top-level only to avoid duplicates)
     const findSelectedDirectories = (nodes) => {
       const found = [];
 
       for (const node of nodes) {
         if (selectedPaths.has(node.name)) {
+          // Include this node with its full subtree
           found.push(node);
         } else if (node.children) {
           // Only recurse if parent isn't selected (to avoid duplicates)
@@ -195,10 +196,11 @@ const DirectoryTree = ({
       return;
     }
 
-    // Combine all directories into one download
+    // Create a combined directory that preserves the full tree structure
+    // by including selected directories as children so recursive file collection works
     const combinedDirectory = {
-      children: selectedDirectories.flatMap((d) => d.children || []),
-      files: selectedDirectories.flatMap((d) => d.files || []),
+      children: selectedDirectories,
+      files: [],
       name: `${selectedDirectories.length} selected folders`,
     };
 

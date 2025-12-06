@@ -144,6 +144,32 @@ jobs:
           git config --global user.email "slskdn@proton.me"
           git config --global user.name "slskdn"
           
+          # Function to generate .SRCINFO from PKGBUILD (without makepkg)
+          generate_srcinfo() {
+            local pkgbuild="$1"
+            source "$pkgbuild"
+            
+            echo "pkgbase = ${pkgname}"
+            echo "	pkgdesc = ${pkgdesc}"
+            echo "	pkgver = ${pkgver}"
+            echo "	pkgrel = ${pkgrel}"
+            echo "	url = ${url}"
+            for arch in "${arch[@]}"; do echo "	arch = $arch"; done
+            echo "	license = ${license[0]}"
+            for dep in "${depends[@]}"; do echo "	depends = $dep"; done
+            for dep in "${makedepends[@]}"; do echo "	makedepends = $dep"; done
+            for dep in "${optdepends[@]}"; do echo "	optdepends = $dep"; done
+            for prov in "${provides[@]}"; do echo "	provides = $prov"; done
+            for conf in "${conflicts[@]}"; do echo "	conflicts = $conf"; done
+            for repl in "${replaces[@]}"; do echo "	replaces = $repl"; done
+            for opt in "${options[@]}"; do echo "	options = $opt"; done
+            for bak in "${backup[@]}"; do echo "	backup = $bak"; done
+            for src in "${source[@]}"; do echo "	source = $src"; done
+            for sum in "${sha256sums[@]}"; do echo "	sha256sums = $sum"; done
+            echo ""
+            echo "pkgname = ${pkgname}"
+          }
+          
           # Clone and update AUR repo (slskdn-bin)
           git clone ssh://aur@aur.archlinux.org/slskdn-bin.git aur-repo || mkdir aur-repo
           cd aur-repo
@@ -152,7 +178,7 @@ jobs:
           cp ../packaging/aur/slskd.yml .
           cp ../packaging/aur/slskd.sysusers .
           cp ../packaging/aur/slskd.install .
-          makepkg --printsrcinfo > .SRCINFO
+          generate_srcinfo PKGBUILD > .SRCINFO
           git add -A
           git commit -m "Update to ${{ steps.version.outputs.tag }}" || true
           git push || echo "AUR push failed - may need manual intervention"
@@ -166,7 +192,7 @@ jobs:
           cp ../packaging/aur/slskd.yml .
           cp ../packaging/aur/slskd.sysusers .
           cp ../packaging/aur/slskd.install .
-          makepkg --printsrcinfo > .SRCINFO
+          generate_srcinfo PKGBUILD > .SRCINFO
           git add -A
           git commit -m "Update to ${{ steps.version.outputs.tag }}" || true
           git push || echo "AUR push failed - may need manual intervention"

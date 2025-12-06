@@ -192,6 +192,7 @@ export const getAll = async ({ direction }) => {
 | async-void-roomservice | RoomService.cs | No try-catch | try-catch wrapper | High (process crash) |
 | searches-undefined-return | searches.js | return undefined | return [] | Medium (UI crash) |
 | transfers-undefined-return | transfers.js | return undefined | return [] | Medium (UI crash) |
+| flaky-upload-governor-test | UploadGovernorTests.cs | AutoData random values | InlineAutoData fixed values | Low (flaky CI) |
 
 ## Ready for Upstream PR
 All three fixes are:

@@ -9,10 +9,16 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/snapetech/slskdn/releases">Releases</a> •
   <a href="https://github.com/snapetech/slskdn/issues">Issues</a> •
-  <a href="https://github.com/snapetech/slskdn/blob/master/FORK_VISION.md">Roadmap</a> •
   <a href="#features">Features</a> •
   <a href="#quick-start">Quick Start</a>
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/github/v/release/snapetech/slskdn?label=version" alt="Version">
+  <img src="https://img.shields.io/badge/base-slskd%200.24.1-blue" alt="Based on slskd">
+  <img src="https://img.shields.io/github/license/snapetech/slskdn" alt="License">
 </p>
 
 ---
@@ -29,49 +35,122 @@ If you've ever seen a feature request closed with *"this can be done via the API
 
 ---
 
-## Why Fork?
-
-| slskd Philosophy | slskdn Philosophy |
-|-----------------|-------------------|
-| Lean core, script the rest | Batteries included |
-| API-first, UI second | Rich UI experience |
-| External integrations | Built-in features |
-| Power users write scripts | Power users get features |
-
-We're not replacing slskd—we're building on top of it for users who want a full-featured client without the DIY.
-
----
-
 ## Features
 
-### ✅ Auto-Replace Stuck Downloads
-*First feature unique to slskdn!*
+### 🔄 Auto-Replace Stuck Downloads
 
-Downloads get stuck. Users go offline. Transfers time out. Instead of manually searching for alternatives, slskdn does it automatically:
+Downloads get stuck. Users go offline. Transfers time out. Instead of manually searching for alternatives, slskdn does it automatically.
 
+**How it works:**
+- Toggle switch in the Downloads page header ("Auto-Replace")
 - Detects stuck downloads (timed out, errored, rejected, cancelled)
 - Searches the network for alternative sources
-- Filters by file extension and configurable size threshold (default 5%)
+- Filters by file extension and size threshold (default 5%)
 - Ranks alternatives by size match, free slots, queue depth, and speed
 - Automatically cancels the stuck download and enqueues the best alternative
 
-**Enable via UI toggle or CLI:**
+**CLI Options:**
 ```bash
-slskd --auto-replace-stuck --auto-replace-threshold 5.0
+--auto-replace-enabled                    # Enable auto-replace
+--auto-replace-max-size-diff-percent 5.0  # Size threshold
+--auto-replace-interval 60                # Check interval in seconds
 ```
 
-### 🔜 Coming Soon
+---
 
-| Feature | Status | Description |
-|---------|--------|-------------|
-| **Wishlist/Background Search** | Planned | Save searches that run automatically |
-| **Clear All Searches** | Planned | One-click cleanup |
-| **Smart Result Ranking** | Planned | Rank results by download history |
-| **User History Badges** | Planned | See past downloads per user |
-| **Block Users from Search** | Planned | Hide scammers/fake results |
-| **Multiple Download Destinations** | Planned | Choose folder per download |
+### ⭐ Wishlist / Background Search
 
-See the full [Feature Roadmap](FORK_VISION.md) for all planned features.
+Save searches that run automatically in the background. Never miss rare content again.
+
+**How it works:**
+- New **Wishlist** item in the navigation sidebar
+- Add searches with custom filters and max results
+- Toggle auto-download for each wishlist item
+- Configurable background search interval
+- Track matches and run history per item
+- Manual "Run Now" button for each search
+
+**CLI Options:**
+```bash
+--wishlist-enabled              # Enable wishlist feature
+--wishlist-interval 60          # Check interval in minutes
+--wishlist-auto-download        # Auto-download found items
+--wishlist-max-results 100      # Max results per search
+```
+
+---
+
+### 📁 Multiple Download Destinations
+
+Configure multiple download folders and choose where files go.
+
+```yaml
+# In your slskd.yml config:
+destinations:
+  folders:
+    - name: "Music"
+      path: "/downloads/music"
+      default: true
+    - name: "Audiobooks"
+      path: "/downloads/audiobooks"
+    - name: "Other"
+      path: "/downloads/other"
+```
+
+---
+
+### 🗑️ Clear All Searches
+
+One-click cleanup for your search history.
+
+**How it works:**
+- Red **"Clear All"** button in the top-right of the search list
+- Removes all completed searches at once
+- Real-time UI update via SignalR
+- Shows toast notification with count of cleared searches
+
+---
+
+### 🧠 Smart Search Result Ranking
+
+Intelligent sorting that considers multiple factors to show you the best sources first.
+
+**How it works:**
+- New default sort: **"⭐ Smart Ranking (Best Overall)"**
+- Combines multiple factors into a single score:
+  - Upload speed (up to 40 points)
+  - Queue length (up to 30 points, lower is better)
+  - Free upload slot bonus (15 points)
+  - Past download history bonus/penalty (+/- 15 points)
+- Purple badge shows smart score next to each username
+- Also adds **"File Count"** sort option
+
+---
+
+### 📊 User Download History Badges
+
+See at a glance which users you've successfully downloaded from before.
+
+**How it works:**
+- Color-coded badges appear next to usernames in search results:
+  - 🟢 **Green** = 5+ successful downloads from this user
+  - 🔵 **Blue** = 1-4 successful downloads
+  - 🟠 **Orange** = More failures than successes
+- Hover over badge to see exact success/failure counts
+- Helps identify reliable sources quickly
+
+---
+
+### 🚫 Block Users from Search Results
+
+Hide specific users from your search results.
+
+**How it works:**
+- Click the user icon (👤✕) on any search result to block that user
+- **"Hide Blocked Users (N)"** toggle shows count of blocked users
+- Blocked users show orange ban icon - click to unblock
+- Block list stored locally in browser (localStorage)
+- Persists across sessions
 
 ---
 
@@ -105,7 +184,6 @@ services:
     environment:
       - SLSKD_SLSK_USERNAME=your_username
       - SLSKD_SLSK_PASSWORD=your_password
-      - SLSKD_REMOTE_CONFIGURATION=true
     volumes:
       - ./app:/app
       - ./downloads:/downloads
@@ -125,8 +203,7 @@ curl -sSL https://dot.net/v1/dotnet-install.sh | bash -s -- --channel 8.0
 export PATH="$HOME/.dotnet:$PATH"
 
 # Run the backend
-cd src/slskd
-dotnet run
+dotnet run --project src/slskd/slskd.csproj
 
 # In another terminal, run the frontend (for development)
 cd src/web
@@ -136,9 +213,26 @@ npm start
 
 ---
 
+## Comparison with slskd
+
+| Feature | slskd | slskdn |
+|---------|-------|--------|
+| Core Soulseek functionality | ✅ | ✅ |
+| Web UI | ✅ | ✅ |
+| REST API | ✅ | ✅ |
+| Auto-replace stuck downloads | ❌ | ✅ |
+| Wishlist/background search | ❌ | ✅ |
+| Multiple download destinations | ❌ | ✅ |
+| Clear all searches | ❌ | ✅ |
+| Smart result ranking | ❌ | ✅ |
+| User download history badges | ❌ | ✅ |
+| Block users from search | ❌ | ✅ |
+
+---
+
 ## Configuration
 
-slskdn uses the same configuration format as slskd. Create `slskd.yml` in your app directory:
+slskdn uses the same configuration format as slskd, with additional options:
 
 ```yaml
 soulseek:
@@ -166,23 +260,30 @@ global:
     auto_replace_stuck: true
     auto_replace_threshold: 5.0
     auto_replace_interval: 60
+  wishlist:
+    enabled: true
+    interval: 60
+    auto_download: false
+
+destinations:
+  folders:
+    - name: "Music"
+      path: "/downloads/music"
+      default: true
+    - name: "Other"
+      path: "/downloads/other"
 ```
 
 ---
 
-## Comparison with slskd
+## Versioning
 
-| Feature | slskd | slskdn |
-|---------|-------|--------|
-| Core Soulseek functionality | ✅ | ✅ |
-| Web UI | ✅ | ✅ |
-| REST API | ✅ | ✅ |
-| Auto-replace stuck downloads | ❌ | ✅ |
-| Wishlist/background search | ❌ | 🔜 |
-| Smart result ranking | ❌ | 🔜 |
-| User download history | ❌ | 🔜 |
-| Clear all searches | ❌ | 🔜 |
-| Multiple download destinations | ❌ | 🔜 |
+slskdn follows slskd's version numbers with a suffix:
+
+- `0.24.1-slskdn.1` = First slskdn release based on slskd 0.24.1
+- `0.25.0-slskdn.1` = First slskdn release based on slskd 0.25.0
+
+This makes it easy to see which upstream version you're based on.
 
 ---
 
@@ -193,12 +294,6 @@ We welcome contributions! Here's how to help:
 1. **Pick an issue** from our [Issue Tracker](https://github.com/snapetech/slskdn/issues)
 2. **Fork the repo** and create a feature branch
 3. **Submit a PR** with your changes
-
-Priority areas:
-- Features from the [roadmap](FORK_VISION.md)
-- Bug fixes
-- Documentation
-- UI/UX improvements
 
 ### Development Setup
 
@@ -217,7 +312,7 @@ npm start
 
 ## Upstream Contributions
 
-Features that prove stable in slskdn will be submitted as PRs to upstream slskd. Our auto-replace feature was the first: [slskd PR #1553](https://github.com/slskd/slskd/pull/1553).
+Features that prove stable in slskdn may be submitted as PRs to upstream slskd. Our auto-replace feature was the first: [slskd PR #1553](https://github.com/slskd/slskd/pull/1553).
 
 We aim to be a **proving ground**, not a permanent fork.
 

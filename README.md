@@ -202,14 +202,16 @@ More control over your search results.
 
 ---
 
-### 📂 Recursive Folder Download
+### 📂 Multi-Select Folder Downloads
 
-Download entire directories with a single click.
+Download multiple folders at once with checkbox selection.
 
 **How it works:**
-- In Browse view, look for the download icon next to any folder
-- Recursively collects all files in that folder and subfolders
-- One-click to queue everything
+- In Browse view, folders display in a collapsible tree view
+- Check the boxes next to any folders you want to download
+- Click "Download Selected" to queue all files from selected folders
+- Recursively collects all files in folders and subfolders
+- File counts shown in badges next to each folder
 
 ---
 
@@ -232,6 +234,20 @@ Browse multiple users at once.
 - Open multiple users in separate tabs
 - Switch between them without losing your place
 - State is preserved for each tab independently
+- Browse data cached per-user to avoid re-fetching
+
+---
+
+### 🧠 Unified Smart Source Ranking
+
+All automatic downloads use intelligent source selection based on your history.
+
+**How it works:**
+- Tracks success/failure rates per user across ALL downloads
+- Auto-replace and wishlist auto-download use smart scoring
+- Scoring factors: upload speed (40pts), queue length (30pts), free slot (15pts), your history with user (+/-15pts)
+- API endpoint at `/api/v0/ranking` to query history and rank sources
+- Better sources = faster, more reliable downloads
 
 ---
 
@@ -344,9 +360,10 @@ npm start
 | Save default filters | ❌ | ✅ |
 | Max filesize filter | ❌ | ✅ |
 | Configurable page size | ❌ | ✅ |
-| Recursive folder download | ❌ | ✅ |
+| Multi-select folder downloads | ❌ | ✅ |
 | Ntfy/Pushover notifications | ❌ | ✅ |
 | Tabbed browsing | ❌ | ✅ |
+| Smart source ranking | ❌ | ✅ |
 | PWA support | ❌ | ✅ |
 
 ---

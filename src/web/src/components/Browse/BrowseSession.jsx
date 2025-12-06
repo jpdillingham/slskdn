@@ -7,6 +7,7 @@ import Directory from './Directory';
 import DirectoryTree from './DirectoryTree';
 import * as lzString from 'lz-string';
 import React, { Component } from 'react';
+import { withRouter } from 'react-router-dom';
 import { toast } from 'react-toastify';
 import { Card, Icon, Input, Loader, Segment } from 'semantic-ui-react';
 
@@ -37,25 +38,30 @@ class BrowseSession extends Component {
 
   componentDidMount() {
     this.fetchStatus();
-    this.loadState();
-    this.setState(
-      {
-        interval: window.setInterval(this.fetchStatus, 500),
-      },
-      () => this.saveState(),
-    );
-    if (this.props.username) {
-      if (this.inputtext?.inputRef?.current) {
-        this.inputtext.inputRef.current.value = this.props.username;
-      }
+    this.setState({
+      interval: window.setInterval(this.fetchStatus, 500),
+    });
 
-      this.setState({ username: this.props.username }, this.browse);
-    } else if (this.props.location?.state?.user) {
-      if (this.inputtext?.inputRef?.current) {
-        this.inputtext.inputRef.current.value = this.props.location.state.user;
-      }
+    // Check for username from props (tab only - navigation handled by parent)
+    const userToBrowse = this.props.username;
 
-      this.setState({ username: this.props.location.state.user }, this.browse);
+    if (userToBrowse) {
+      // Try to load cached data first
+      const hasCachedData = this.loadState();
+
+      // Small delay to ensure ref is ready
+      setTimeout(() => {
+        if (this.inputtext?.inputRef?.current) {
+          this.inputtext.inputRef.current.value = userToBrowse;
+        }
+
+        // Only fetch if we don't have cached data
+        if (!hasCachedData) {
+          this.setState({ username: userToBrowse }, this.browse);
+        }
+      }, 50);
+    } else {
+      this.loadState();
     }
 
     document.addEventListener('keyup', this.keyUp, false);
@@ -69,6 +75,15 @@ class BrowseSession extends Component {
 
   browse = () => {
     const username = this.inputtext.inputRef.current.value;
+
+    if (!username) {
+      return;
+    }
+
+    // Notify parent to update tab label
+    if (this.props.onUsernameChange) {
+      this.props.onUsernameChange(username);
+    }
 
     this.setState(
       { browseError: undefined, browseState: 'pending', username },
@@ -138,60 +153,73 @@ class BrowseSession extends Component {
 
   keyUp = (event) => (event.key === 'Escape' ? this.clear() : '');
 
-  saveState = () => {
-    this.inputtext.inputRef.current.value = this.state.username;
-    this.inputtext.inputRef.current.disabled =
-      this.state.browseState !== 'idle';
+  getStorageKey = () => {
+    const username = this.props.username || this.state.username || 'default';
+    return `slskd-browse-state-${username}`;
+  };
 
-    const storeToLocalStorage = () => {
+  saveState = () => {
+    if (this.inputtext?.inputRef?.current) {
+      this.inputtext.inputRef.current.value = this.state.username;
+      this.inputtext.inputRef.current.disabled =
+        this.state.browseState !== 'idle';
+    }
+
+    // Only save if we have actual browse data
+    if (this.state.username && this.state.tree.length > 0) {
       try {
         localStorage.setItem(
-          `soulseek-example-browse-state-${this.state.username || 'default'}`,
+          this.getStorageKey(),
           lzString.compress(JSON.stringify(this.state)),
         );
       } catch (error) {
         console.error(error);
       }
-    };
-
-    // Shifting the compression and safe out of the current render loop to speed up responsiveness
-    // requestIdleCallback is not supported in Safari hence we push to next tick using Promise.resolve
-    if (window.requestIdleCallback) {
-      window.requestIdleCallback(storeToLocalStorage);
-    } else {
-      Promise.resolve().then(storeToLocalStorage);
     }
   };
 
   loadState = () => {
-    const key = `soulseek-example-browse-state-${
-      this.state.username || 'default'
-    }`;
-    let loadedState;
-    try {
-      loadedState = JSON.parse(
-        lzString.decompress(localStorage.getItem(key) || ''),
-      );
-    } catch {
-      // ignore
+    // Try to load saved state for this username
+    const username = this.props.username;
+
+    if (username) {
+      try {
+        const key = `slskd-browse-state-${username}`;
+        const savedState = JSON.parse(
+          lzString.decompress(localStorage.getItem(key) || ''),
+        );
+
+        if (savedState && savedState.tree && savedState.tree.length > 0) {
+          // We have cached data - use it instead of re-fetching
+          this.setState((previousState) => ({
+            ...savedState,
+            browseState: 'complete',
+            interval: previousState.interval,
+          }));
+          return true; // Indicate we loaded cached data
+        }
+      } catch {
+        // ignore - will fetch fresh
+      }
     }
 
-    this.setState(
-      (!this.props.username &&
-        !this.props.location?.state?.user &&
-        loadedState) ||
-        initialState,
-    );
+    return false;
   };
 
   fetchStatus = () => {
     const { browseState, username } = this.state;
-    if (browseState === 'pending') {
-      users.getBrowseStatus({ username }).then((response) =>
-        this.setState({
-          browseStatus: response.data,
-        }),
-      );
+    // Only poll status when actively browsing AND we have a username
+    if (browseState === 'pending' && username) {
+      users
+        .getBrowseStatus({ username })
+        .then((response) =>
+          this.setState({
+            browseStatus: response.data,
+          }),
+        )
+        .catch(() => {
+          // Ignore 404s during status polling
+        });
     }
   };
 
@@ -252,18 +280,35 @@ class BrowseSession extends Component {
     );
   };
 
+  handleRefresh = () => {
+    // Force re-fetch by clearing cache and browsing again
+    const { username } = this.state;
+
+    if (username) {
+      // Clear the cached state for this user
+      try {
+        localStorage.removeItem(`slskd-browse-state-${username}`);
+      } catch {
+        // ignore
+      }
+
+      // Re-browse
+      this.browse();
+    }
+  };
+
   handleDownloadDirectory = (directory) => {
     const { separator, username } = this.state;
 
     // Collect all files recursively
-    const collectFiles = (directoryToScan) => {
-      let collected = (directoryToScan.files || []).map((f) => ({
-        filename: `${directoryToScan.name}${separator}${f.filename}`,
+    const collectFiles = (folder) => {
+      let collected = (folder.files || []).map((f) => ({
+        filename: `${folder.name}${separator}${f.filename}`,
         size: f.size,
       }));
 
-      if (directoryToScan.children) {
-        for (const child of directoryToScan.children) {
+      if (folder.children) {
+        for (const child of folder.children) {
           collected = collected.concat(collectFiles(child));
         }
       }
@@ -309,8 +354,8 @@ class BrowseSession extends Component {
     } = this.state;
     const { locked, name } = selectedDirectory;
     const pending = browseState === 'pending';
-
-    const emptyTree = !(tree && tree.length > 0);
+    const finished = ['complete', 'error'].includes(browseState);
+    const emptyTree = finished && tree.length === 0;
 
     const files = (selectedDirectory.files || []).map((f) => ({
       ...f,
@@ -379,19 +424,35 @@ class BrowseSession extends Component {
                     raised
                   >
                     <Card.Content>
-                      <Card.Header>
+                      <Card.Header
+                        style={{
+                          alignItems: 'center',
+                          display: 'flex',
+                          justifyContent: 'space-between',
+                        }}
+                      >
+                        <span>
+                          <Icon
+                            color="green"
+                            name="circle"
+                          />
+                          {username}
+                        </span>
                         <Icon
-                          color="green"
-                          name="circle"
+                          link
+                          name="refresh"
+                          onClick={this.handleRefresh}
+                          title="Refresh user's file list"
                         />
-                        {username}
                       </Card.Header>
                       <Card.Meta className="browse-meta">
-                        <span>
-                          {`${info.files + info.lockedFiles} files in ${info.directories + info.lockedDirectories} directories (including ${info.lockedFiles} files in ${info.lockedDirectories} locked directories)`}{' '}
-                          {/* eslint-disable-line max-len */}
-                        </span>
+                        {`${info.directories} directories, ${info.files} files`}
+                        {info.lockedDirectories
+                          ? ` (${info.lockedDirectories} locked directories, ${info.lockedFiles} locked files)`
+                          : ''}
                       </Card.Meta>
+                    </Card.Content>
+                    <Card.Content>
                       <Segment className="browse-folderlist">
                         <DirectoryTree
                           onDownload={this.handleDownloadDirectory}
@@ -422,4 +483,4 @@ class BrowseSession extends Component {
   }
 }
 
-export default BrowseSession;
+export default withRouter(BrowseSession);

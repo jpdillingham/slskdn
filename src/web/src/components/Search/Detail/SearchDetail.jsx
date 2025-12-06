@@ -69,6 +69,7 @@ const calculateSmartScore = (response, userStats) => {
   return score;
 };
 
+// eslint-disable-next-line complexity
 const SearchDetail = ({
   creating,
   disabled,
@@ -103,6 +104,9 @@ const SearchDetail = ({
   );
   const [displayCount, setDisplayCount] = useState(pageSize);
   const [userStats, setUserStats] = useState({});
+  const [hasSavedDefault, setHasSavedDefault] = useState(
+    Boolean(localStorage.getItem('slskd-default-search-filter')),
+  );
 
   // Fetch user download stats for smart ranking
   useEffect(() => {
@@ -238,7 +242,14 @@ const SearchDetail = ({
 
   const saveAsDefault = () => {
     localStorage.setItem('slskd-default-search-filter', resultFilters);
+    setHasSavedDefault(true);
     toast.success('Search filters saved as default');
+  };
+
+  const clearSavedDefault = () => {
+    localStorage.removeItem('slskd-default-search-filter');
+    setHasSavedDefault(false);
+    toast.info('Saved default filter cleared');
   };
 
   const filteredCount = results?.length - sortedAndFilteredResults.length;
@@ -349,6 +360,7 @@ const SearchDetail = ({
                       color="red"
                       icon="x"
                       onClick={() => setResultFilters('')}
+                      title="Clear current filter"
                     />
                   )}
                   <Button
@@ -357,6 +369,14 @@ const SearchDetail = ({
                     onClick={saveAsDefault}
                     title="Save as default filter"
                   />
+                  {hasSavedDefault && (
+                    <Button
+                      color="orange"
+                      icon="trash"
+                      onClick={clearSavedDefault}
+                      title="Clear saved default filter"
+                    />
+                  )}
                 </Button.Group>
               }
               className="search-filter"

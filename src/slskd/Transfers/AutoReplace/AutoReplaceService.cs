@@ -19,7 +19,6 @@ namespace slskd.Transfers.AutoReplace
 {
     using System;
     using System.Collections.Generic;
-    using System.IO;
     using System.Linq;
     using System.Text.RegularExpressions;
     using System.Threading;
@@ -202,7 +201,7 @@ namespace slskd.Transfers.AutoReplace
     }
 
     /// <summary>
-    ///     An alternative source candidate.
+    ///     An alternative candidate for a stuck download.
     /// </summary>
     public class AlternativeCandidate
     {
@@ -212,7 +211,7 @@ namespace slskd.Transfers.AutoReplace
         public string Username { get; set; }
 
         /// <summary>
-        ///     Gets or sets the filename.
+        ///     Gets or sets the filename from the alternative source.
         /// </summary>
         public string Filename { get; set; }
 
@@ -234,7 +233,7 @@ namespace slskd.Transfers.AutoReplace
         /// <summary>
         ///     Gets or sets the user's queue length.
         /// </summary>
-        public long QueueLength { get; set; }
+        public int QueueLength { get; set; }
 
         /// <summary>
         ///     Gets or sets the user's upload speed.
@@ -243,7 +242,7 @@ namespace slskd.Transfers.AutoReplace
     }
 
     /// <summary>
-    ///     Service for automatically replacing stuck downloads with alternative sources.
+    ///     Implementation of <see cref="IAutoReplaceService"/>.
     /// </summary>
     public class AutoReplaceService : IAutoReplaceService
     {
@@ -306,7 +305,7 @@ namespace slskd.Transfers.AutoReplace
                 return candidates;
             }
 
-            Log.Information("Searching for alternative sources for: {SearchText}", searchText);
+            Log.Information("Searching for alternatives: {SearchText}", searchText);
 
             var searchId = Guid.NewGuid();
             var searchOptions = new Soulseek.SearchOptions(
@@ -316,19 +315,17 @@ namespace slskd.Transfers.AutoReplace
 
             try
             {
-                var search = await Searches.StartAsync(
+                await Searches.StartAsync(
                     searchId,
                     SearchQuery.FromText(searchText),
                     SearchScope.Network,
                     searchOptions);
 
-                // Poll for search completion with timeout - wait up to 30 seconds for search to complete
+                // Poll for search completion (up to 30 seconds)
                 var maxWait = TimeSpan.FromSeconds(30);
                 var pollInterval = TimeSpan.FromMilliseconds(1000);
                 var waited = TimeSpan.Zero;
                 slskd.Search.Search searchWithResponses = null;
-
-                Log.Debug("Waiting for search {Id} to complete (max {MaxWait}s)...", searchId, maxWait.TotalSeconds);
 
                 while (waited < maxWait)
                 {
@@ -339,67 +336,48 @@ namespace slskd.Transfers.AutoReplace
 
                     if (searchWithResponses?.State.HasFlag(SearchStates.Completed) == true)
                     {
-                        Log.Debug("Search {Id} completed after {WaitMs}ms with state: {State}, responses: {ResponseCount}",
-                            searchId,
-                            waited.TotalMilliseconds,
-                            searchWithResponses.State,
-                            searchWithResponses.Responses?.Count() ?? 0);
                         break;
                     }
-
-                    Log.Debug("Search {Id} still {State} after {WaitMs}ms...", searchId, searchWithResponses?.State, waited.TotalMilliseconds);
                 }
 
                 if (searchWithResponses?.Responses == null || !searchWithResponses.Responses.Any())
                 {
-                    Log.Warning("No search responses found for: {SearchText} (search state: {State})",
-                        searchText,
-                        searchWithResponses?.State.ToString() ?? "null");
+                    Log.Warning("No search responses found for: {SearchText}", searchText);
                     return candidates;
                 }
 
-                // Get expected extension - handle Windows paths on Linux
+                // Get expected extension
                 var expectedExt = GetExtension(request.Filename)?.ToLowerInvariant();
-                Log.Debug("Looking for files with extension: {Extension}, original size: {Size}", expectedExt, request.Size);
 
                 foreach (var response in searchWithResponses.Responses)
                 {
                     // Skip the original source
                     if (response.Username.Equals(request.Username, StringComparison.OrdinalIgnoreCase))
                     {
-                        Log.Debug("Skipping original source: {Username}", response.Username);
                         continue;
                     }
 
-                    Log.Debug("Checking response from {Username} with {FileCount} files", response.Username, response.Files.Count());
-
                     foreach (var file in response.Files)
                     {
-                        // Check extension match - use our cross-platform extension getter
+                        // Check extension match
                         var fileExt = GetExtension(file.Filename)?.ToLowerInvariant();
-                        Log.Debug("  File: {Filename}, ext: {Ext}, size: {Size}", file.Filename, fileExt ?? "null", file.Size);
-
                         if (!string.IsNullOrEmpty(expectedExt) && !string.IsNullOrEmpty(fileExt) && fileExt != expectedExt)
                         {
-                            Log.Debug("    Skipped: extension mismatch ({FileExt} != {ExpectedExt})", fileExt, expectedExt);
                             continue;
                         }
 
                         // Check size difference
                         if (file.Size <= 0)
                         {
-                            Log.Debug("    Skipped: zero or negative size");
                             continue;
                         }
 
                         var sizeDiff = Math.Abs(file.Size - request.Size) / (double)request.Size * 100;
                         if (sizeDiff > request.Threshold * 2)
                         {
-                            Log.Debug("    Skipped: size diff {Diff:F1}% > threshold {Threshold}%", sizeDiff, request.Threshold * 2);
                             continue;
                         }
 
-                        Log.Debug("    ACCEPTED: size diff {Diff:F1}%", sizeDiff);
                         candidates.Add(new AlternativeCandidate
                         {
                             Username = response.Username,
@@ -407,13 +385,13 @@ namespace slskd.Transfers.AutoReplace
                             Size = file.Size,
                             SizeDiffPercent = sizeDiff,
                             HasFreeUploadSlot = response.HasFreeUploadSlot,
-                            QueueLength = response.QueueLength,
+                            QueueLength = (int)response.QueueLength,
                             UploadSpeed = response.UploadSpeed,
                         });
                     }
                 }
 
-                // Sort by: size difference (smaller is better), then has free slot, then queue length
+                // Sort by: size difference, free slot, queue length, speed
                 candidates = candidates
                     .OrderBy(c => c.SizeDiffPercent)
                     .ThenByDescending(c => c.HasFreeUploadSlot)
@@ -449,10 +427,9 @@ namespace slskd.Transfers.AutoReplace
                 Transfers.Downloads.TryCancel(originalGuid);
                 Transfers.Downloads.Remove(originalGuid);
 
-                Log.Information(
-                    "Removed stuck download from {Username}: {Filename}",
+                Log.Information("Removed stuck download from {Username}: {Filename}",
                     request.OriginalUsername,
-                    request.NewFilename);
+                    CleanTrackTitle(request.NewFilename));
 
                 // Enqueue the new download
                 var (enqueued, failed) = await Transfers.Downloads.EnqueueAsync(
@@ -462,18 +439,16 @@ namespace slskd.Transfers.AutoReplace
 
                 if (enqueued.Count > 0)
                 {
-                    Log.Information(
-                        "Enqueued replacement download from {Username}: {Filename}",
+                    Log.Information("Enqueued replacement from {Username}: {Filename}",
                         request.NewUsername,
-                        request.NewFilename);
+                        CleanTrackTitle(request.NewFilename));
                     return true;
                 }
                 else
                 {
-                    Log.Warning(
-                        "Failed to enqueue replacement download from {Username}: {Filename}",
+                    Log.Warning("Failed to enqueue replacement from {Username}: {Filename}",
                         request.NewUsername,
-                        request.NewFilename);
+                        CleanTrackTitle(request.NewFilename));
                     return false;
                 }
             }
@@ -494,13 +469,12 @@ namespace slskd.Transfers.AutoReplace
             var stuckDownloads = GetStuckDownloads().ToList();
             if (stuckDownloads.Count == 0)
             {
-                Log.Debug("No stuck downloads to process");
                 return result;
             }
 
             Log.Information("Processing {Count} stuck downloads for auto-replacement", stuckDownloads.Count);
 
-            // Group by track to avoid duplicate searches
+            // Track processed to avoid duplicates
             var processedTracks = new HashSet<string>();
 
             foreach (var download in stuckDownloads)
@@ -545,7 +519,7 @@ namespace slskd.Transfers.AutoReplace
 
                     if (bestCandidate == null)
                     {
-                        detail.Error = "No suitable alternative found within threshold";
+                        detail.Error = "No suitable alternative found";
                         result.Failed++;
                         result.Details.Add(detail);
                         continue;
@@ -571,10 +545,9 @@ namespace slskd.Transfers.AutoReplace
                     {
                         detail.Success = true;
                         result.Replaced++;
-                        Log.Information(
-                            "Replaced stuck download: {Original} -> {New} (size diff: {Diff:F1}%)",
-                            download.Filename,
-                            bestCandidate.Filename,
+                        Log.Information("Replaced: {Original} -> {New} (diff: {Diff:F1}%)",
+                            CleanTrackTitle(download.Filename),
+                            CleanTrackTitle(bestCandidate.Filename),
                             bestCandidate.SizeDiffPercent);
                     }
                     else
@@ -587,17 +560,16 @@ namespace slskd.Transfers.AutoReplace
                 {
                     detail.Error = ex.Message;
                     result.Failed++;
-                    Log.Error(ex, "Error processing stuck download: {Filename}", download.Filename);
+                    Log.Error(ex, "Error processing: {Filename}", CleanTrackTitle(download.Filename));
                 }
 
                 result.Details.Add(detail);
 
-                // Small delay between operations to avoid overwhelming the network
+                // Brief delay between operations
                 await Task.Delay(500, cancellationToken);
             }
 
-            Log.Information(
-                "Auto-replace completed: {Replaced} replaced, {Failed} failed, {Skipped} skipped",
+            Log.Information("Auto-replace complete: {Replaced} replaced, {Failed} failed, {Skipped} skipped",
                 result.Replaced,
                 result.Failed,
                 result.Skipped);
@@ -608,8 +580,6 @@ namespace slskd.Transfers.AutoReplace
         /// <summary>
         ///     Clean a track title for searching.
         /// </summary>
-        /// <param name="filename">The filename to clean.</param>
-        /// <returns>A cleaned search-friendly title.</returns>
         private static string CleanTrackTitle(string filename)
         {
             if (string.IsNullOrEmpty(filename))
@@ -641,16 +611,14 @@ namespace slskd.Transfers.AutoReplace
             name = Regex.Replace(name, @"\s*\(?\[?(?:FLAC|MP3|AAC|ALAC|WAV|OGG|WMA)[\s\d]*(?:kbps|kHz|bit)?\]?\)?", string.Empty, RegexOptions.IgnoreCase);
             name = Regex.Replace(name, @"\s*\(?\[?\d+\s*kbps\]?\)?", string.Empty, RegexOptions.IgnoreCase);
 
-            // Strip leading track numbers: "01 - Song" or "01. Song"
+            // Strip leading track numbers
             name = Regex.Replace(name, @"^[0-9]{1,4}[\s.\-)_]+", string.Empty);
 
             // Strip year patterns
             name = Regex.Replace(name, @"\s*[\(\[]?\d{4}[\)\]]?\s*", " ");
 
-            // Collapse whitespace
+            // Collapse whitespace and trim
             name = Regex.Replace(name, @"\s+", " ").Trim();
-
-            // Strip leading/trailing dashes
             name = name.Trim('-', ' ');
 
             return name;
@@ -659,8 +627,6 @@ namespace slskd.Transfers.AutoReplace
         /// <summary>
         ///     Get file extension handling both Windows and Unix paths.
         /// </summary>
-        /// <param name="filename">The filename or path.</param>
-        /// <returns>The extension without the leading dot, or null if none.</returns>
         private static string GetExtension(string filename)
         {
             if (string.IsNullOrEmpty(filename))
@@ -668,7 +634,6 @@ namespace slskd.Transfers.AutoReplace
                 return null;
             }
 
-            // Find the last dot after the last path separator
             var lastBackslash = filename.LastIndexOf('\\');
             var lastSlash = filename.LastIndexOf('/');
             var lastSep = Math.Max(lastBackslash, lastSlash);

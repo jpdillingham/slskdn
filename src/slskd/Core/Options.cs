@@ -263,6 +263,18 @@ namespace slskd
         public FiltersOptions Filters { get; init; } = new FiltersOptions();
 
         /// <summary>
+        ///     Gets wishlist options.
+        /// </summary>
+        [Validate]
+        public WishlistOptions Wishlist { get; init; } = new WishlistOptions();
+
+        /// <summary>
+        ///     Gets download destination options.
+        /// </summary>
+        [Validate]
+        public DestinationsOptions Destinations { get; init; } = new DestinationsOptions();
+
+        /// <summary>
         ///     Gets a list of rooms to automatically join upon connection.
         /// </summary>
         [Argument(default, "rooms")]
@@ -1339,6 +1351,78 @@ namespace slskd
 
                     return results;
                 }
+            }
+        }
+
+        /// <summary>
+        ///     Wishlist options.
+        /// </summary>
+        public class WishlistOptions
+        {
+            /// <summary>
+            ///     Gets a value indicating whether wishlist background searching is enabled.
+            /// </summary>
+            [Argument(default, "wishlist-enabled")]
+            [EnvironmentVariable("WISHLIST_ENABLED")]
+            [Description("enable automatic wishlist background searching")]
+            public bool Enabled { get; init; } = false;
+
+            /// <summary>
+            ///     Gets the interval between wishlist searches, in seconds.
+            /// </summary>
+            [Argument(default, "wishlist-interval")]
+            [EnvironmentVariable("WISHLIST_INTERVAL")]
+            [Description("interval between wishlist searches in seconds")]
+            [Range(300, int.MaxValue)]
+            public int IntervalSeconds { get; init; } = 3600;
+
+            /// <summary>
+            ///     Gets a value indicating whether to auto-download matches by default.
+            /// </summary>
+            [Argument(default, "wishlist-auto-download")]
+            [EnvironmentVariable("WISHLIST_AUTO_DOWNLOAD")]
+            [Description("automatically download matches from wishlist searches")]
+            public bool AutoDownload { get; init; } = false;
+
+            /// <summary>
+            ///     Gets the maximum results per wishlist search.
+            /// </summary>
+            [Argument(default, "wishlist-max-results")]
+            [EnvironmentVariable("WISHLIST_MAX_RESULTS")]
+            [Description("maximum results per wishlist search")]
+            [Range(10, 1000)]
+            public int MaxResults { get; init; } = 100;
+        }
+
+        /// <summary>
+        ///     Download destination options.
+        /// </summary>
+        public class DestinationsOptions
+        {
+            /// <summary>
+            ///     Gets the list of download destinations.
+            /// </summary>
+            public DestinationOption[] Folders { get; init; } = Array.Empty<DestinationOption>();
+
+            /// <summary>
+            ///     A download destination folder.
+            /// </summary>
+            public class DestinationOption
+            {
+                /// <summary>
+                ///     Gets the display name for this destination.
+                /// </summary>
+                public string Name { get; init; }
+
+                /// <summary>
+                ///     Gets the path to this destination.
+                /// </summary>
+                public string Path { get; init; }
+
+                /// <summary>
+                ///     Gets a value indicating whether this is the default destination.
+                /// </summary>
+                public bool Default { get; init; } = false;
             }
         }
 

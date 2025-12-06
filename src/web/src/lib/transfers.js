@@ -13,9 +13,12 @@ export const getAll = async ({ direction }) => {
   return response;
 };
 
-export const download = ({ username, files = [] }) => {
+export const download = ({ username, files = [], destination }) => {
+  const parameters = destination
+    ? `?destination=${encodeURIComponent(destination)}`
+    : '';
   return api.post(
-    `/transfers/downloads/${encodeURIComponent(username)}`,
+    `/transfers/downloads/${encodeURIComponent(username)}${parameters}`,
     files,
   );
 };

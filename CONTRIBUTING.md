@@ -11,6 +11,36 @@ We don't maintain a Contributor License Agreement (CLA) but we do require that a
 This application is released under the [AGPL 3.0](https://github.com/slskd/slskd/blob/master/LICENSE) license, and no single individual or entity owns
 or will ever own the copyright.
 
+## slskdn Fork Attribution Policy
+
+This is a fork of [slskd/slskd](https://github.com/slskd/slskd). We maintain the following copyright attribution policy:
+
+### Existing Files (from upstream slskd)
+Files that exist in the upstream repository retain their original copyright:
+```csharp
+// <copyright file="Example.cs" company="slskd Team">
+//     Copyright (c) slskd Team. All rights reserved.
+```
+
+### New Files (slskdn-specific)
+New files created specifically for slskdn features use the fork's copyright:
+```csharp
+// <copyright file="Example.cs" company="slskdn Team">
+//     Copyright (c) slskdn Team. All rights reserved.
+```
+
+### Fork-Specific Directories
+The following directories contain slskdn-specific code:
+- `src/slskd/Capabilities/` - Peer capability discovery
+- `src/slskd/HashDb/` - Local hash database
+- `src/slskd/Mesh/` - Epidemic mesh sync protocol
+- `src/slskd/Backfill/` - Conservative header probing
+- `src/slskd/Transfers/MultiSource/` - Multi-source swarm downloads
+- `src/slskd/Transfers/Ranking/` - Source ranking
+- `src/slskd/Users/Notes/` - User notes
+
+When creating new files, use the slskdn Team copyright header. When modifying existing upstream files, preserve the original slskd Team copyright.
+
 ## Contribution Workflow
 
 1. Assign yourself to the issue that you'll be working on.  If you'd like to contribute something for which there is no 

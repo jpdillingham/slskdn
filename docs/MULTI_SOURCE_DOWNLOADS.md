@@ -123,28 +123,43 @@ Recommended settings:
 
 After extensive testing, the following improvements have stabilized the swarm behavior:
 
-1.  **Chunk Size Increase**: Default increased to **1MB** (1024KB).
-    *   Result: Significantly reduced connection overhead and faster completion.
-2.  **Hard Timeout**: Added 15s hard timeout per chunk download.
-    *   Result: Prevents "hanging" workers (stuck in connection phase) from blocking chunks indefinitely.
-3.  **FLAC Hash Verification** (NEW - Critical Fix):
-    *   Before swarm download, verify all sources have **identical FLAC MD5 hashes**.
-    *   Sources with different hashes are excluded to prevent chunk corruption.
-    *   API: Set `skipVerification: false` to enable (recommended for FLAC files).
-4.  **Peer Timeouts (replaces Blacklisting)**:
-    *   Slow/failed peers get a **30-second timeout** instead of permanent blacklist.
-    *   Allows peers to recover from temporary issues.
-    *   Result: Better utilization of available sources over time.
-5.  **Dynamic Speed Threshold**:
-    *   Minimum speed is now **15% of best observed speed** (floor: 5 KB/s).
-    *   If best peer is 200 KB/s, threshold is 30 KB/s.
-    *   Result: Faster cycling of stragglers when fast peers are available.
-6.  **Desperation Retry**: If all "proven" sources fail, timeouts are cleared and **ALL** original sources are retried.
-    *   Result: Prevents stalling when the only "proven" source disconnects or slows down.
-7.  **Smart Slow Peer Pruning**:
-    *   Workers below dynamic threshold for 10s are cycled out **ONLY IF** other workers are available (`ActiveWorkers > 1`).
-    *   If it's the *last* worker, it is kept alive (better than failing).
-    *   Speed failures are treated as "soft" (don't count towards the 3-strike kill limit).
+### 🎉 WORKING MULTI-SOURCE FLAC DOWNLOADS - VERIFIED!
+
+1.  **SHA256 Byte Verification** (Critical Fix):
+    *   Verify sources using **SHA256 of first 32KB bytes** (not FLAC audio MD5!)
+    *   FLAC audio MD5 only verifies decoded audio - different encodes can have same MD5 but different bytes
+    *   This caused corruption when mixing chunks from different encodes
+    *   API: Set `skipVerification: false` to enable (REQUIRED for integrity)
+
+2.  **Atomic Chunk Writes** (Critical Fix):
+    *   Each worker writes to a unique temp file (`chunk_XXXX_<hash>.tmp`)
+    *   Winner atomically moves to final path; losers delete their temp files
+    *   Prevents race condition corruption with speculative execution
+
+3.  **Chunk Size: 512KB** (Optimized):
+    *   Balances connection overhead amortization vs failure recovery
+    *   Typical overhead: **33-57%** (vs 80-100% with smaller chunks)
+    *   TTFB: 2-5 seconds, Transfer: 1.5-6 seconds
+
+4.  **Timing Metrics**:
+    *   `TimeToFirstByteMs` - connection/handshake overhead
+    *   `TransferTimeMs` - actual data transfer time
+    *   `OverheadPercent` - non-transfer time percentage
+    *   `TransferSpeedBps` - raw speed excluding overhead
+
+5.  **Unlimited Retries with Stuck Detection**:
+    *   Retries continue until complete or **3 consecutive rounds with zero progress**
+    *   No arbitrary retry limit that causes premature failure
+
+6.  **Dynamic Speed Threshold**:
+    *   Minimum speed: **15% of best observed speed** (floor: 5 KB/s)
+    *   Slow duration: **8 seconds** before cycling out
+    *   Hard timeout: **10 seconds** per chunk
+
+7.  **Peer Timeouts (not Blacklists)**:
+    *   Slow/failed peers get **20-second timeout**, not permanent ban
+    *   Allows recovery from temporary network issues
+    *   Desperation mode clears all timeouts and retries everyone
 
 ### Successful Test Run (1MB Chunks)
 
@@ -232,10 +247,16 @@ The following analysis outlines potential extension points within the existing S
 
 ## Known Issues / TODO
 
-1.  **No dynamic source discovery**: Pool is built once at start; new sources aren't discovered mid-download (Search could be re-run).
-2.  **Progress reporting**: Live progress could be improved for frontend integration.
-3.  **Discovery DB hash population**: The discovery database stores sources by size but often lacks FLAC hash values. Hash verification happens at download time, not discovery time. Consider background hash collection.
-4.  **Different releases with same size**: Some albums have multiple releases (Japan, US, remastered) that happen to have identical file sizes but different content. Always use `skipVerification: false` for FLAC files.
+1.  **No dynamic source discovery**: Pool is built once at start; new sources aren't discovered mid-download.
+2.  **Discovery DB hash population**: The discovery database stores sources by size but not SHA256 hashes. Hash verification happens at download time. Consider background hash collection.
+3.  **Connection overhead**: TTFB is 2-5 seconds per chunk due to Soulseek connection setup. Larger chunks amortize this better.
+
+## Resolved Issues ✅
+
+1.  ~~**FLAC corruption from mixed encodes**~~: Fixed with SHA256 byte verification (not FLAC audio MD5)
+2.  ~~**Race condition in speculative execution**~~: Fixed with atomic chunk writes
+3.  ~~**Premature failure with 5 retry limit**~~: Fixed with unlimited retries + stuck detection
+4.  ~~**80-100% overhead with small chunks**~~: Fixed by increasing to 512KB chunks
 
 ---
 

@@ -459,6 +459,10 @@ namespace slskd.Transfers.MultiSource
 
                     try
                     {
+                        // Enforce hard timeout on chunk download to prevent hanging
+                        using var chunkCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                        chunkCts.CancelAfter(45000); // 45s max per chunk
+
                         var result = await DownloadChunkAsync(
                             username,
                             sourcePath,
@@ -467,7 +471,7 @@ namespace slskd.Transfers.MultiSource
                             chunk.EndOffset,
                             chunkPath,
                             status,
-                            cancellationToken);
+                            chunkCts.Token);
 
                         if (result.Success)
                         {

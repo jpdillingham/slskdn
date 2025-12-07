@@ -46,22 +46,26 @@ namespace slskd.Transfers.MultiSource.API
         /// <param name="soulseekClient">The Soulseek client.</param>
         /// <param name="transferService">The transfer service.</param>
         /// <param name="discoveryService">The source discovery service.</param>
+        /// <param name="contentVerificationService">The content verification service.</param>
         public MultiSourceController(
             IMultiSourceDownloadService multiSourceService,
             ISoulseekClient soulseekClient,
             ITransferService transferService,
-            ISourceDiscoveryService discoveryService)
+            ISourceDiscoveryService discoveryService,
+            IContentVerificationService contentVerificationService)
         {
             MultiSource = multiSourceService;
             Client = soulseekClient;
             Transfers = transferService;
             Discovery = discoveryService;
+            ContentVerification = contentVerificationService;
         }
 
         private IMultiSourceDownloadService MultiSource { get; }
         private ISoulseekClient Client { get; }
         private ITransferService Transfers { get; }
         private ISourceDiscoveryService Discovery { get; }
+        private IContentVerificationService ContentVerification { get; }
         private ILogger Log { get; } = Serilog.Log.ForContext<MultiSourceController>();
 
         // Store last search results for drill-down
@@ -492,15 +496,53 @@ namespace slskd.Transfers.MultiSource.API
                 return BadRequest($"Not enough sources ({allSources.Count}). Need at least 2.");
             }
 
-            Log.Information("[SWARM] Starting REAL swarm with {Count} sources, {ChunkSize} byte chunks", allSources.Count, request.ChunkSize);
+            Log.Information("[SWARM] Starting REAL swarm with {Count} sources, {ChunkSize} byte chunks, skipVerification={Skip}",
+                allSources.Count, request.ChunkSize, request.SkipVerification);
 
-            // Convert to VerifiedSource list for the swarm service
-            var verifiedSources = allSources.Select(s => new VerifiedSource
+            List<VerifiedSource> verifiedSources;
+            string expectedHash = null;
+
+            if (request.SkipVerification)
             {
-                Username = s.Username,
-                FullPath = s.FullPath,
-                Method = VerificationMethod.None,
-            }).ToList();
+                // NO VERIFICATION - just use all sources (risky for multi-source!)
+                verifiedSources = allSources.Select(s => new VerifiedSource
+                {
+                    Username = s.Username,
+                    FullPath = s.FullPath,
+                    Method = VerificationMethod.None,
+                }).ToList();
+            }
+            else
+            {
+                // VERIFY sources by FLAC MD5 - critical for multi-source integrity!
+                Log.Information("[SWARM] Verifying {Count} sources by FLAC hash...", allSources.Count);
+
+                var verificationResult = await ContentVerification.VerifySourcesAsync(
+                    new ContentVerificationRequest
+                    {
+                        Filename = allSources.First().FullPath,
+                        FileSize = request.Size,
+                        CandidateUsernames = allSources.Select(s => s.Username).ToList(),
+                        TimeoutMs = 30000,
+                    },
+                    HttpContext.RequestAborted);
+
+                if (verificationResult.BestSources.Count < 2)
+                {
+                    return BadRequest(new
+                    {
+                        error = $"Not enough verified sources ({verificationResult.BestSources.Count}). Need at least 2 with matching FLAC hash.",
+                        hashGroups = verificationResult.SourcesByHash.Count,
+                        failedSources = verificationResult.FailedSources.Count,
+                    });
+                }
+
+                verifiedSources = verificationResult.BestSources;
+                expectedHash = verificationResult.BestHash;
+
+                Log.Information("[SWARM] Verified {Count} sources with matching hash {Hash}",
+                    verifiedSources.Count, expectedHash?.Substring(0, 16) + "...");
+            }
 
             // Calculate chunks for display
             var numChunks = (int)Math.Ceiling((double)request.Size / request.ChunkSize);

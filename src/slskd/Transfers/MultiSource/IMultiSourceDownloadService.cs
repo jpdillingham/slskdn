@@ -216,6 +216,7 @@ namespace slskd.Transfers.MultiSource
         private int activeChunks;
         private int completedChunks;
         private int activeWorkers;
+        private long bestSpeedBps;
 
         /// <summary>
         ///     Gets or sets the download ID.
@@ -284,6 +285,20 @@ namespace slskd.Transfers.MultiSource
         public double PercentComplete => FileSize > 0 ? (BytesDownloaded * 100.0) / FileSize : 0;
 
         /// <summary>
+        ///     Gets or sets the best observed speed in bytes per second.
+        /// </summary>
+        public long BestSpeedBps
+        {
+            get => System.Threading.Interlocked.Read(ref bestSpeedBps);
+            set => System.Threading.Interlocked.Exchange(ref bestSpeedBps, value);
+        }
+
+        /// <summary>
+        ///     Peers in timeout (username -> timeout expiry).
+        /// </summary>
+        public System.Collections.Concurrent.ConcurrentDictionary<string, DateTime> PeerTimeouts { get; } = new();
+
+        /// <summary>
         ///     Thread-safe increment of active chunks.
         /// </summary>
         public void IncrementActiveChunks() => System.Threading.Interlocked.Increment(ref activeChunks);
@@ -313,6 +328,42 @@ namespace slskd.Transfers.MultiSource
         /// </summary>
         /// <param name="bytes">Bytes to add.</param>
         public void AddBytesDownloaded(long bytes) => System.Threading.Interlocked.Add(ref bytesDownloaded, bytes);
+
+        /// <summary>
+        ///     Thread-safe update of best speed (only if new speed is higher).
+        /// </summary>
+        /// <param name="speedBps">Speed in bytes per second.</param>
+        public void UpdateBestSpeed(long speedBps)
+        {
+            long current;
+            do
+            {
+                current = System.Threading.Interlocked.Read(ref bestSpeedBps);
+                if (speedBps <= current) return;
+            }
+            while (System.Threading.Interlocked.CompareExchange(ref bestSpeedBps, speedBps, current) != current);
+        }
+
+        /// <summary>
+        ///     Check if peer is in timeout.
+        /// </summary>
+        public bool IsPeerInTimeout(string username)
+        {
+            if (PeerTimeouts.TryGetValue(username, out var expiry))
+            {
+                if (DateTime.UtcNow < expiry) return true;
+                PeerTimeouts.TryRemove(username, out _);
+            }
+            return false;
+        }
+
+        /// <summary>
+        ///     Put peer in timeout.
+        /// </summary>
+        public void SetPeerTimeout(string username, TimeSpan duration)
+        {
+            PeerTimeouts[username] = DateTime.UtcNow + duration;
+        }
 
         /// <summary>
         ///     Gets or sets the start time for rate calculation.

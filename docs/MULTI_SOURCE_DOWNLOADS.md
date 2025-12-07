@@ -26,24 +26,41 @@ Multi-source downloading allows slskdn to download a single file from multiple p
 - **Concurrent chunk downloads**: Multiple workers can grab different chunks simultaneously
 - **Proven source retry**: After first pass, re-using only successful sources dramatically improves completion rate
 
+#### CRITICAL: Source Verification Required
+
+**Problem discovered**: Files with identical sizes can have different byte content (different encodes, masters, or releases). Mixing chunks from different source files causes **FLAC corruption** at chunk boundaries.
+
+**Solution**: Before starting a multi-source download, verify that all sources have **identical FLAC STREAMINFO MD5 hashes**:
+
+1. Download first 42 bytes from each candidate source
+2. Parse FLAC STREAMINFO block to extract the audio MD5 hash
+3. Group sources by their MD5 hash
+4. Only use sources from the **largest matching group**
+
+Example: If 34 sources have size 24,770,547 but only 28 share the same FLAC MD5, use only those 28.
+
+**API flag**: `skipVerification: false` (default is `true` for speed, but causes corruption!)
+
 #### Limitations Discovered
 
 1. **Many clients reject partial downloads**: Most Soulseek clients will reject download requests with `startOffset > 0`, reporting "Download failed by remote client"
 2. **Single download per user per file**: Soulseek only allows one active download of a specific file from a specific user at a time
 3. **Variable client behavior**: Some clients work perfectly with partial downloads, others reject immediately
 
-#### Speed Thresholds
+#### Speed Thresholds (Dynamic)
 
-- **Minimum speed**: 5 KB/s
-- **Slow duration**: 15 seconds
-- Workers downloading slower than 5 KB/s for 15+ consecutive seconds are cycled out
+- **Minimum speed**: Dynamic - 15% of best observed speed (minimum floor: 5 KB/s)
+- **Slow duration**: 10 seconds of sustained slow speed
+- Workers downloading slower than the threshold are cycled out with a **timeout** (not blacklisted)
 - Their chunk is re-queued for faster peers
+- Timed-out peers can retry after 30 seconds (they may have recovered)
 
 #### Retry Behavior
 
 - Workers tolerate up to 3 consecutive failures before giving up
 - Failed chunks are always re-queued for other workers
-- After initial pass completes, up to 3 retry rounds using only "proven" sources (those that succeeded at least once)
+- After initial pass completes, up to 5 retry rounds using only "proven" sources (those that succeeded at least once)
+- Slow peers get **timeouts** (temporary), not blacklists (permanent)
 
 ## API Endpoints
 
@@ -108,14 +125,24 @@ After extensive testing, the following improvements have stabilized the swarm be
 
 1.  **Chunk Size Increase**: Default increased to **1MB** (1024KB).
     *   Result: Significantly reduced connection overhead and faster completion.
-2.  **Hard Timeout**: Added 45s hard timeout per chunk download.
+2.  **Hard Timeout**: Added 15s hard timeout per chunk download.
     *   Result: Prevents "hanging" workers (stuck in connection phase) from blocking chunks indefinitely.
-3.  **Blacklisting**: Failed peers (especially those returning "Remote Client Failed") are blacklisted for the session.
-    *   Result: Prevents infinite retry loops on bad peers.
-4.  **Desperation Retry**: If all "proven" sources fail, the blacklist is purged and **ALL** original sources are retried.
+3.  **FLAC Hash Verification** (NEW - Critical Fix):
+    *   Before swarm download, verify all sources have **identical FLAC MD5 hashes**.
+    *   Sources with different hashes are excluded to prevent chunk corruption.
+    *   API: Set `skipVerification: false` to enable (recommended for FLAC files).
+4.  **Peer Timeouts (replaces Blacklisting)**:
+    *   Slow/failed peers get a **30-second timeout** instead of permanent blacklist.
+    *   Allows peers to recover from temporary issues.
+    *   Result: Better utilization of available sources over time.
+5.  **Dynamic Speed Threshold**:
+    *   Minimum speed is now **15% of best observed speed** (floor: 5 KB/s).
+    *   If best peer is 200 KB/s, threshold is 30 KB/s.
+    *   Result: Faster cycling of stragglers when fast peers are available.
+6.  **Desperation Retry**: If all "proven" sources fail, timeouts are cleared and **ALL** original sources are retried.
     *   Result: Prevents stalling when the only "proven" source disconnects or slows down.
-5.  **Smart Slow Peer Pruning**:
-    *   Workers < 5 KB/s for 15s are cancelled/re-queued **ONLY IF** other workers are available (`ActiveWorkers > 1`).
+7.  **Smart Slow Peer Pruning**:
+    *   Workers below dynamic threshold for 10s are cycled out **ONLY IF** other workers are available (`ActiveWorkers > 1`).
     *   If it's the *last* worker, it is kept alive (better than failing).
     *   Speed failures are treated as "soft" (don't count towards the 3-strike kill limit).
 
@@ -207,6 +234,8 @@ The following analysis outlines potential extension points within the existing S
 
 1.  **No dynamic source discovery**: Pool is built once at start; new sources aren't discovered mid-download (Search could be re-run).
 2.  **Progress reporting**: Live progress could be improved for frontend integration.
+3.  **Discovery DB hash population**: The discovery database stores sources by size but often lacks FLAC hash values. Hash verification happens at download time, not discovery time. Consider background hash collection.
+4.  **Different releases with same size**: Some albums have multiple releases (Japan, US, remastered) that happen to have identical file sizes but different content. Always use `skipVerification: false` for FLAC files.
 
 ---
 

@@ -720,6 +720,9 @@ namespace slskd
             // Hash database service (Phase 2)
             services.AddSingleton<HashDb.IHashDbService>(sp => new HashDb.HashDbService(Program.AppDirectory));
 
+            // Mesh sync service (Phase 3)
+            services.AddSingleton<Mesh.IMeshSyncService, Mesh.MeshSyncService>();
+
             services.AddSingleton<IRelayService, RelayService>();
 
             services.AddSingleton<IFTPClientFactory, FTPClientFactory>();

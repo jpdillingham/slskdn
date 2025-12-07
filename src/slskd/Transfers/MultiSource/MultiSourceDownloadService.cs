@@ -217,6 +217,7 @@ namespace slskd.Transfers.MultiSource
                             request.Filename,
                             request.FileSize,
                             chunkQueue,
+                            chunks,
                             completedChunks,
                             sourceStats,
                             failedUsers,
@@ -304,6 +305,7 @@ namespace slskd.Transfers.MultiSource
                                     request.Filename,
                                     request.FileSize,
                                     chunkQueue,
+                                    chunks,
                                     completedChunks,
                                     sourceStats,
                                     failedUsers,
@@ -407,6 +409,7 @@ namespace slskd.Transfers.MultiSource
             string filename,
             long fileSize,
             ConcurrentQueue<ChunkInfo> chunkQueue,
+            List<(int Index, long StartOffset, long EndOffset)> allChunks,
             ConcurrentDictionary<int, ChunkResult> completedChunks,
             ConcurrentDictionary<string, int> sourceStats,
             ConcurrentDictionary<string, bool> failedUsers,
@@ -436,17 +439,34 @@ namespace slskd.Transfers.MultiSource
                     // Try to grab a chunk from the queue
                     if (!chunkQueue.TryDequeue(out var chunk))
                     {
-                        // Queue empty - wait a bit and check again (other workers might requeue)
-                        await Task.Delay(100, cancellationToken);
-
-                        // If still empty and all done, exit
-                        if (chunkQueue.IsEmpty && completedChunks.Count >= status.TotalChunks)
+                        // Queue empty - check if we're done or should wait
+                        if (completedChunks.Count >= status.TotalChunks)
                         {
-                            break;
+                            break; // All done!
                         }
 
-                        // Try again
-                        continue;
+                        // Find any incomplete chunk (speculative execution / work stealing)
+                        // This allows fast workers to re-attempt chunks that slow workers are struggling with
+                        var incompleteChunkData = allChunks
+                            .Where(c => !completedChunks.ContainsKey(c.Index))
+                            .FirstOrDefault();
+
+                        if (incompleteChunkData.Index >= 0 || incompleteChunkData.EndOffset > 0)
+                        {
+                            chunk = new ChunkInfo
+                            {
+                                Index = incompleteChunkData.Index,
+                                StartOffset = incompleteChunkData.StartOffset,
+                                EndOffset = incompleteChunkData.EndOffset,
+                            };
+                            Log.Debug("[SWARM] {Username} stealing chunk {Index} (speculative)", username, chunk.Index);
+                        }
+                        else
+                        {
+                            // Wait a bit and check again
+                            await Task.Delay(100, cancellationToken);
+                            continue;
+                        }
                     }
 
                     // Skip if already completed by another worker

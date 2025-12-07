@@ -49,7 +49,19 @@ server_ok() { [ -n "$(get_token)" ]; }
 
 start_server() {
   echo -e "${YELLOW}Starting server...${NC}"
-  pkill -9 -f "dotnet.*slskd" 2>/dev/null; sleep 2
+  
+  # Kill ALL dotnet/slskd processes aggressively
+  pkill -9 -f "dotnet.*slskd" 2>/dev/null
+  pkill -9 -f "slskd" 2>/dev/null
+  pkill -9 -f "VBCSCompiler" 2>/dev/null
+  sleep 3
+  
+  # Double-check
+  if pgrep -f "slskd" > /dev/null 2>&1; then
+    echo -e "${RED}Could not kill existing slskd processes. Trying harder...${NC}"
+    killall -9 dotnet slskd 2>/dev/null
+    sleep 2
+  fi
   
   for attempt in 1 2 3; do
     local HTTP=$((30000 + RANDOM % 25000))

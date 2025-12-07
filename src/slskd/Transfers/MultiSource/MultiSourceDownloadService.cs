@@ -173,57 +173,143 @@ namespace slskd.Transfers.MultiSource
                     return result;
                 }
 
-                // Calculate chunks
-                var chunks = CalculateChunks(request.FileSize, request.Sources.Count);
+                // Calculate chunks - use smaller chunks for more parallelism
+                var chunkSize = request.ChunkSize > 0 ? request.ChunkSize : DefaultChunkSize;
+                var chunks = CalculateChunksFixed(request.FileSize, chunkSize);
                 status.TotalChunks = chunks.Count;
 
                 Log.Information(
-                    "Starting multi-source download: {Filename} ({Size} bytes) from {Sources} sources in {Chunks} chunks",
+                    "SWARM DOWNLOAD: {Filename} ({Size} bytes) = {Chunks} chunks from {Sources} sources",
                     request.Filename,
                     request.FileSize,
-                    request.Sources.Count,
-                    chunks.Count);
+                    chunks.Count,
+                    request.Sources.Count);
 
                 // Create temp directory for chunks
                 var tempDir = IOPath.Combine(IOPath.GetTempPath(), "slskdn-multidownload", request.Id.ToString());
                 IODirectory.CreateDirectory(tempDir);
 
-                // Download chunks in parallel
-                var chunkTasks = new List<Task<ChunkResult>>();
-                var sourceIndex = 0;
-
+                // SWARM MODE: Shared work queue
+                var chunkQueue = new ConcurrentQueue<ChunkInfo>();
                 foreach (var chunk in chunks)
                 {
-                    var source = request.Sources[sourceIndex % request.Sources.Count];
-                    var chunkPath = IOPath.Combine(tempDir, $"chunk_{chunk.Index:D4}.bin");
-
-                    chunkTasks.Add(DownloadChunkAsync(
-                        source.Username,
-                        request.Filename,
-                        chunk.StartOffset,
-                        chunk.EndOffset,
-                        chunkPath,
-                        status,
-                        cancellationToken));
-
-                    sourceIndex++;
+                    chunkQueue.Enqueue(new ChunkInfo
+                    {
+                        Index = chunk.Index,
+                        StartOffset = chunk.StartOffset,
+                        EndOffset = chunk.EndOffset,
+                    });
                 }
 
-                var chunkResults = await Task.WhenAll(chunkTasks);
-                result.Chunks = chunkResults.ToList();
-                result.SourcesUsed = request.Sources.Count;
+                var completedChunks = new ConcurrentDictionary<int, ChunkResult>();
+                var sourceStats = new ConcurrentDictionary<string, int>(); // username -> chunks completed
 
-                // Check if all chunks succeeded
-                var failedChunks = chunkResults.Where(c => !c.Success).ToList();
-                if (failedChunks.Any())
+                // Spawn worker for EACH source - they all grab from the shared queue
+                var workerTasks = new List<Task>();
+
+                foreach (var source in request.Sources)
                 {
-                    Log.Warning("{Count} chunks failed, attempting recovery...", failedChunks.Count);
+                    workerTasks.Add(Task.Run(async () =>
+                    {
+                        await RunSourceWorkerAsync(
+                            source,
+                            request.Filename,
+                            request.FileSize,
+                            chunkQueue,
+                            completedChunks,
+                            sourceStats,
+                            tempDir,
+                            status,
+                            cancellationToken);
+                    }, cancellationToken));
+                }
 
-                    // TODO: Retry failed chunks with different sources
-                    result.Error = $"{failedChunks.Count} chunks failed to download";
+                // Wait for all workers (they exit when queue is empty or all chunks complete)
+                await Task.WhenAll(workerTasks);
+
+                // Check results after first pass
+                var failedCount = chunks.Count - completedChunks.Count;
+                Log.Information("[SWARM] First pass: {Completed}/{Total} chunks", completedChunks.Count, chunks.Count);
+
+                // If chunks remain, retry with workers that SUCCEEDED
+                var retryAttempt = 0;
+                const int maxRetries = 3;
+
+                while (failedCount > 0 && retryAttempt < maxRetries)
+                {
+                    retryAttempt++;
+                    var successfulSources = sourceStats.Where(s => s.Value > 0).Select(s => s.Key).ToList();
+
+                    if (successfulSources.Count == 0)
+                    {
+                        Log.Warning("[SWARM] No successful sources to retry with");
+                        break;
+                    }
+
+                    Log.Information("[SWARM] Retry {Attempt}/{Max}: {Missing} chunks remaining, using {Sources} proven sources",
+                        retryAttempt, maxRetries, failedCount, successfulSources.Count);
+
+                    // Re-enqueue missing chunks
+                    foreach (var chunk in chunks)
+                    {
+                        if (!completedChunks.ContainsKey(chunk.Index))
+                        {
+                            chunkQueue.Enqueue(new ChunkInfo
+                            {
+                                Index = chunk.Index,
+                                StartOffset = chunk.StartOffset,
+                                EndOffset = chunk.EndOffset,
+                            });
+                        }
+                    }
+
+                    // Spawn workers only for successful sources
+                    var retryTasks = new List<Task>();
+                    foreach (var username in successfulSources)
+                    {
+                        var source = request.Sources.FirstOrDefault(s => s.Username == username);
+                        if (source != null)
+                        {
+                            retryTasks.Add(Task.Run(async () =>
+                            {
+                                await RunSourceWorkerAsync(
+                                    source,
+                                    request.Filename,
+                                    request.FileSize,
+                                    chunkQueue,
+                                    completedChunks,
+                                    sourceStats,
+                                    tempDir,
+                                    status,
+                                    cancellationToken);
+                            }, cancellationToken));
+                        }
+                    }
+
+                    await Task.WhenAll(retryTasks);
+                    failedCount = chunks.Count - completedChunks.Count;
+                    Log.Information("[SWARM] After retry {Attempt}: {Completed}/{Total} chunks",
+                        retryAttempt, completedChunks.Count, chunks.Count);
+                }
+
+                result.Chunks = completedChunks.Values.ToList();
+                result.SourcesUsed = sourceStats.Count(s => s.Value > 0);
+
+                if (failedCount > 0)
+                {
+                    result.Error = $"{failedCount} chunks failed after {retryAttempt} retries";
                     result.Success = false;
                     status.State = MultiSourceDownloadState.Failed;
+
+                    Log.Error("[SWARM] FAILED: {Failed}/{Total} chunks missing after all retries", failedCount, chunks.Count);
                     return result;
+                }
+
+                // Log source distribution
+                Log.Information("[SWARM] SUCCESS! Chunk distribution:");
+                foreach (var stat in sourceStats.OrderByDescending(s => s.Value))
+                {
+                    Log.Information("  {Username}: {Count} chunks", stat.Key, stat.Value);
                 }
 
                 // Assemble chunks
@@ -266,7 +352,7 @@ namespace slskd.Transfers.MultiSource
                 status.State = MultiSourceDownloadState.Completed;
 
                 Log.Information(
-                    "Multi-source download complete: {Filename} in {Time}ms ({Speed:F2} MB/s) using {Sources} sources",
+                    "SWARM SUCCESS: {Filename} in {Time}ms ({Speed:F2} MB/s) from {Sources} sources",
                     request.Filename,
                     result.TotalTimeMs,
                     (request.FileSize / 1024.0 / 1024.0) / (result.TotalTimeMs / 1000.0),
@@ -276,7 +362,7 @@ namespace slskd.Transfers.MultiSource
             }
             catch (Exception ex)
             {
-                Log.Error(ex, "Multi-source download failed: {Message}", ex.Message);
+                Log.Error(ex, "SWARM DOWNLOAD FAILED: {Message}", ex.Message);
                 result.Error = ex.Message;
                 result.Success = false;
                 status.State = MultiSourceDownloadState.Failed;
@@ -286,6 +372,144 @@ namespace slskd.Transfers.MultiSource
             {
                 ActiveDownloads.TryRemove(request.Id, out _);
             }
+        }
+
+        private async Task RunSourceWorkerAsync(
+            VerifiedSource source,
+            string filename,
+            long fileSize,
+            ConcurrentQueue<ChunkInfo> chunkQueue,
+            ConcurrentDictionary<int, ChunkResult> completedChunks,
+            ConcurrentDictionary<string, int> sourceStats,
+            string tempDir,
+            MultiSourceDownloadStatus status,
+            CancellationToken cancellationToken)
+        {
+            var username = source.Username;
+            var sourcePath = source.FullPath;
+            sourceStats[username] = 0;
+            var consecutiveFailures = 0;
+            const int maxConsecutiveFailures = 3;
+
+            Log.Information("[SWARM] Worker started: {Username}", username);
+
+            while (!cancellationToken.IsCancellationRequested)
+            {
+                // Check if all chunks done
+                if (completedChunks.Count >= status.TotalChunks)
+                {
+                    break;
+                }
+
+                // Try to grab a chunk from the queue
+                if (!chunkQueue.TryDequeue(out var chunk))
+                {
+                    // Queue empty - wait a bit and check again (other workers might requeue)
+                    await Task.Delay(100, cancellationToken);
+
+                    // If still empty and all done, exit
+                    if (chunkQueue.IsEmpty && completedChunks.Count >= status.TotalChunks)
+                    {
+                        break;
+                    }
+
+                    // Try again
+                    continue;
+                }
+
+                // Skip if already completed by another worker
+                if (completedChunks.ContainsKey(chunk.Index))
+                {
+                    continue;
+                }
+
+                var chunkPath = IOPath.Combine(tempDir, $"chunk_{chunk.Index:D4}.bin");
+
+                try
+                {
+                    var result = await DownloadChunkAsync(
+                        username,
+                        sourcePath,
+                        fileSize,
+                        chunk.StartOffset,
+                        chunk.EndOffset,
+                        chunkPath,
+                        status,
+                        cancellationToken);
+
+                    if (result.Success)
+                    {
+                        completedChunks[chunk.Index] = result;
+                        sourceStats.AddOrUpdate(username, 1, (_, count) => count + 1);
+                        consecutiveFailures = 0; // Reset on success
+
+                        Log.Information(
+                            "[SWARM] ✓ {Username} chunk {Index} @ {Speed:F0} KB/s [{Completed}/{Total}]",
+                            username,
+                            chunk.Index,
+                            result.SpeedBps / 1024.0,
+                            completedChunks.Count,
+                            status.TotalChunks);
+                    }
+                    else
+                    {
+                        consecutiveFailures++;
+                        Log.Warning("[SWARM] ✗ {Username} chunk {Index}: {Error} (fail {Fails}/{Max})",
+                            username, chunk.Index, result.Error, consecutiveFailures, maxConsecutiveFailures);
+
+                        // Put chunk back for another worker
+                        chunkQueue.Enqueue(chunk);
+
+                        // Only exit if too many consecutive failures
+                        if (consecutiveFailures >= maxConsecutiveFailures)
+                        {
+                            Log.Warning("[SWARM] {Username} giving up after {Fails} consecutive failures", username, consecutiveFailures);
+                            break;
+                        }
+
+                        // Small delay before retry
+                        await Task.Delay(500, cancellationToken);
+                    }
+                }
+                catch (OperationCanceledException)
+                {
+                    chunkQueue.Enqueue(chunk);
+                    break;
+                }
+                catch (Exception ex)
+                {
+                    consecutiveFailures++;
+                    Log.Warning("[SWARM] ✗ {Username} chunk {Index} exception: {Message} (fail {Fails}/{Max})",
+                        username, chunk.Index, ex.Message, consecutiveFailures, maxConsecutiveFailures);
+
+                    chunkQueue.Enqueue(chunk);
+
+                    if (consecutiveFailures >= maxConsecutiveFailures)
+                    {
+                        Log.Warning("[SWARM] {Username} giving up after {Fails} consecutive failures", username, consecutiveFailures);
+                        break;
+                    }
+
+                    await Task.Delay(500, cancellationToken);
+                }
+            }
+
+            var chunksCompleted = sourceStats.GetValueOrDefault(username, 0);
+            if (chunksCompleted > 0)
+            {
+                Log.Information("[SWARM] Worker done: {Username} completed {Count} chunks ✓", username, chunksCompleted);
+            }
+            else
+            {
+                Log.Information("[SWARM] Worker done: {Username} completed 0 chunks", username);
+            }
+        }
+
+        private class ChunkInfo
+        {
+            public int Index { get; set; }
+            public long StartOffset { get; set; }
+            public long EndOffset { get; set; }
         }
 
         /// <inheritdoc/>
@@ -314,15 +538,36 @@ namespace slskd.Transfers.MultiSource
             return chunks;
         }
 
+        private List<(int Index, long StartOffset, long EndOffset)> CalculateChunksFixed(long fileSize, long chunkSize)
+        {
+            var chunks = new List<(int Index, long StartOffset, long EndOffset)>();
+            var offset = 0L;
+            var index = 0;
+
+            while (offset < fileSize)
+            {
+                var endOffset = Math.Min(offset + chunkSize, fileSize);
+                chunks.Add((index, offset, endOffset));
+                offset = endOffset;
+                index++;
+            }
+
+            return chunks;
+        }
+
         private async Task<ChunkResult> DownloadChunkAsync(
             string username,
             string filename,
+            long fileSize,
             long startOffset,
             long endOffset,
             string outputPath,
             MultiSourceDownloadStatus status,
             CancellationToken cancellationToken)
         {
+            const int minSpeedBps = 5 * 1024;  // 5 KB/s minimum
+            const int slowDurationMs = 15000;   // 15 seconds of slow = too slow
+
             var result = new ChunkResult
             {
                 Username = username,
@@ -335,42 +580,108 @@ namespace slskd.Transfers.MultiSource
 
             try
             {
-                var size = endOffset - startOffset;
+                var chunkSize = endOffset - startOffset;
 
                 Log.Debug(
-                    "Downloading chunk from {Username}: {Start}-{End} ({Size} bytes)",
+                    "Downloading chunk from {Username}: {Start}-{End} ({Size} bytes of {FileSize})",
                     username,
                     startOffset,
                     endOffset,
-                    size);
+                    chunkSize,
+                    fileSize);
 
+                // Soulseek requires size when startOffset > 0
+                // We use a limited stream that cancels after receiving our chunk
+                using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
                 using var fileStream = new FileStream(outputPath, FileMode.Create, FileAccess.Write);
+                var limitedStream = new LimitedWriteStream(fileStream, chunkSize, cts);
 
-                await Client.DownloadAsync(
-                    username: username,
-                    remoteFilename: filename,
-                    outputStreamFactory: () => Task.FromResult<Stream>(fileStream),
-                    size: size,
-                    startOffset: startOffset,
-                    cancellationToken: cancellationToken,
-                    options: new TransferOptions(
-                        maximumLingerTime: 3000,
-                        disposeOutputStreamOnCompletion: false));
+                // Speed monitor - cancel if too slow for too long
+                var slowSince = (DateTime?)null;
+                var lastBytes = 0L;
+                var speedMonitorTask = Task.Run(async () =>
+                {
+                    while (!cts.Token.IsCancellationRequested && !limitedStream.LimitReached)
+                    {
+                        await Task.Delay(2000, cts.Token).ConfigureAwait(false);
+
+                        var currentBytes = limitedStream.BytesWritten;
+                        var bytesInInterval = currentBytes - lastBytes;
+                        var speedBps = bytesInInterval / 2; // 2 second interval
+                        lastBytes = currentBytes;
+
+                        if (speedBps < minSpeedBps && currentBytes > 0)
+                        {
+                            slowSince ??= DateTime.UtcNow;
+                            var slowDuration = (DateTime.UtcNow - slowSince.Value).TotalMilliseconds;
+
+                            if (slowDuration >= slowDurationMs)
+                            {
+                                Log.Warning("[SWARM] {Username} too slow ({Speed:F1} KB/s for {Duration:F0}s) - cycling out",
+                                    username, speedBps / 1024.0, slowDuration / 1000.0);
+                                result.Error = $"Too slow: {speedBps / 1024.0:F1} KB/s for {slowDuration / 1000.0:F0}s";
+                                cts.Cancel();
+                                return;
+                            }
+                        }
+                        else
+                        {
+                            slowSince = null; // Reset if speed recovered
+                        }
+                    }
+                }, cts.Token);
+
+                try
+                {
+                    // Pass the file size (required when startOffset > 0)
+                    // The limited stream will cancel after we get our chunk
+                    await Client.DownloadAsync(
+                        username: username,
+                        remoteFilename: filename,
+                        outputStreamFactory: () => Task.FromResult<Stream>(limitedStream),
+                        size: fileSize,
+                        startOffset: startOffset,
+                        cancellationToken: cts.Token,
+                        options: new TransferOptions(
+                            maximumLingerTime: 3000,
+                            disposeOutputStreamOnCompletion: false));
+                }
+                catch (OperationCanceledException) when (limitedStream.LimitReached)
+                {
+                    // Expected - we cancelled after getting our chunk
+                    Log.Debug("Chunk complete (cancelled remaining) from {Username}", username);
+                }
+                catch (OperationCanceledException) when (result.Error?.Contains("Too slow") == true)
+                {
+                    // Speed monitor cancelled us
+                    return result;
+                }
+
+                // Stop speed monitor
+                try { cts.Cancel(); } catch { }
+                try { await speedMonitorTask.ConfigureAwait(false); } catch { }
 
                 stopwatch.Stop();
-                result.BytesDownloaded = size;
+                result.BytesDownloaded = limitedStream.BytesWritten;
                 result.TimeMs = stopwatch.ElapsedMilliseconds;
-                result.Success = true;
+                result.Success = limitedStream.BytesWritten >= chunkSize;
 
-                status.AddBytesDownloaded(size);
-                status.IncrementCompletedChunks();
+                if (result.Success)
+                {
+                    status.AddBytesDownloaded(chunkSize);
+                    status.IncrementCompletedChunks();
 
-                Log.Debug(
-                    "Chunk complete from {Username}: {Size} bytes in {Time}ms ({Speed:F2} KB/s)",
-                    username,
-                    size,
-                    result.TimeMs,
-                    result.SpeedBps / 1024.0);
+                    Log.Debug(
+                        "Chunk complete from {Username}: {Size} bytes in {Time}ms ({Speed:F2} KB/s)",
+                        username,
+                        chunkSize,
+                        result.TimeMs,
+                        result.SpeedBps / 1024.0);
+                }
+                else
+                {
+                    result.Error = $"Only got {limitedStream.BytesWritten}/{chunkSize} bytes";
+                }
 
                 return result;
             }

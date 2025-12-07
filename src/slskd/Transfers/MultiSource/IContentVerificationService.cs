@@ -142,6 +142,11 @@ namespace slskd.Transfers.MultiSource
         public string Username { get; set; }
 
         /// <summary>
+        ///     Gets or sets the full file path on the user's share.
+        /// </summary>
+        public string FullPath { get; set; }
+
+        /// <summary>
         ///     Gets or sets the content hash.
         /// </summary>
         public string ContentHash { get; set; }
@@ -178,6 +183,11 @@ namespace slskd.Transfers.MultiSource
     /// </summary>
     public enum VerificationMethod
     {
+        /// <summary>
+        ///     No verification - size match only.
+        /// </summary>
+        None,
+
         /// <summary>
         ///     FLAC STREAMINFO MD5 (42 bytes, most reliable).
         /// </summary>

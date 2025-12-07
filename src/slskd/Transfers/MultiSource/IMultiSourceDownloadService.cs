@@ -93,6 +93,11 @@ namespace slskd.Transfers.MultiSource
         ///     Gets or sets the local output path.
         /// </summary>
         public string OutputPath { get; set; }
+
+        /// <summary>
+        ///     Gets or sets the chunk size in bytes. Default is 128KB.
+        /// </summary>
+        public long ChunkSize { get; set; } = 128 * 1024;
     }
 
     /// <summary>

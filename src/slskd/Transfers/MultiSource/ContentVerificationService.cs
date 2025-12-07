@@ -157,28 +157,37 @@ namespace slskd.Transfers.MultiSource
                 }
 
                 Log.Debug(
-                    "Requesting {Bytes} bytes from {Username} for {Filename} (FLAC: {IsFlac})",
+                    "Requesting first {Bytes} bytes from {Username} for {Filename} (FLAC: {IsFlac})",
                     bytesNeeded,
                     username,
                     filename,
                     isFlac);
 
-                // Download the verification chunk
+                // Download the verification chunk using a limited stream that cancels after enough bytes
                 using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
                 cts.CancelAfter(timeoutMs);
 
                 using var memoryStream = new MemoryStream(bytesNeeded);
+                var limitedStream = new LimitedWriteStream(memoryStream, bytesNeeded, cts);
 
-                await Client.DownloadAsync(
-                    username: username,
-                    remoteFilename: filename,
-                    outputStreamFactory: () => Task.FromResult<Stream>(memoryStream),
-                    size: bytesNeeded,
-                    startOffset: 0,
-                    cancellationToken: cts.Token,
-                    options: new TransferOptions(
-                        maximumLingerTime: 1000,
-                        disposeOutputStreamOnCompletion: false));
+                try
+                {
+                    await Client.DownloadAsync(
+                        username: username,
+                        remoteFilename: filename,
+                        outputStreamFactory: () => Task.FromResult<Stream>(limitedStream),
+                        size: fileSize,  // Pass actual file size to avoid validation error
+                        startOffset: 0,
+                        cancellationToken: cts.Token,
+                        options: new TransferOptions(
+                            maximumLingerTime: 1000,
+                            disposeOutputStreamOnCompletion: false));
+                }
+                catch (OperationCanceledException) when (limitedStream.LimitReached)
+                {
+                    // Expected - we cancelled after getting enough bytes
+                    Log.Debug("Got {Bytes} bytes from {Username}, cancelled remaining transfer", bytesNeeded, username);
+                }
 
                 var data = memoryStream.ToArray();
 
@@ -227,6 +236,61 @@ namespace slskd.Transfers.MultiSource
                 stopwatch.Stop();
                 Log.Warning(ex, "Verification failed for {Username} on {Filename}: {Message}", username, filename, ex.Message);
                 return (username, null, default, stopwatch.ElapsedMilliseconds, ex.Message);
+            }
+        }
+    }
+
+    /// <summary>
+    ///     A stream wrapper that cancels after writing a specified number of bytes.
+    /// </summary>
+    public class LimitedWriteStream : Stream
+    {
+        private readonly Stream innerStream;
+        private readonly long limit;
+        private readonly CancellationTokenSource cts;
+        private long totalBytesWritten;
+
+        public LimitedWriteStream(Stream innerStream, long limit, CancellationTokenSource cts)
+        {
+            this.innerStream = innerStream;
+            this.limit = limit;
+            this.cts = cts;
+        }
+
+        public bool LimitReached { get; private set; }
+        public long BytesWritten => totalBytesWritten;
+
+        public override bool CanRead => false;
+        public override bool CanSeek => false;
+        public override bool CanWrite => true;
+        public override long Length => innerStream.Length;
+        public override long Position { get => innerStream.Position; set => innerStream.Position = value; }
+
+        public override void Flush() => innerStream.Flush();
+        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+
+        public override void Write(byte[] buffer, int offset, int count)
+        {
+            if (LimitReached)
+            {
+                return;
+            }
+
+            var remaining = limit - totalBytesWritten;
+            var toWrite = (int)Math.Min(count, remaining);
+
+            if (toWrite > 0)
+            {
+                innerStream.Write(buffer, offset, toWrite);
+                totalBytesWritten += toWrite;
+            }
+
+            if (totalBytesWritten >= limit)
+            {
+                LimitReached = true;
+                cts.Cancel(); // Cancel the download - we have enough
             }
         }
     }

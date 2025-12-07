@@ -547,6 +547,134 @@ namespace slskd.Transfers.MultiSource.API
         }
 
         /// <summary>
+        ///     Start swarm download in background (non-blocking). Returns job ID for polling.
+        /// </summary>
+        /// <param name="request">The swarm download request.</param>
+        /// <returns>Job ID and initial status.</returns>
+        [HttpPost("swarm/async")]
+        [Authorize(Policy = AuthPolicy.Any)]
+        public async Task<IActionResult> SwarmDownloadAsync([FromBody] SwarmDownloadRequest request)
+        {
+            if (request.Size == 0)
+            {
+                return BadRequest("Size is required (exact file size in bytes).");
+            }
+
+            var allSources = new List<(string Username, string FullPath, int Speed)>();
+
+            if (request.UseDiscoveryDb)
+            {
+                var dbSources = Discovery.GetSourcesBySize(request.Size, 100);
+                foreach (var src in dbSources)
+                {
+                    if (!allSources.Any(s => s.Username.Equals(src.Username, StringComparison.OrdinalIgnoreCase)))
+                    {
+                        allSources.Add((src.Username, src.Filename, src.UploadSpeed));
+                    }
+                }
+            }
+
+            if (allSources.Count < 2)
+            {
+                return BadRequest($"Not enough sources ({allSources.Count}). Need at least 2.");
+            }
+
+            var verifiedSources = allSources.Select(s => new VerifiedSource
+            {
+                Username = s.Username,
+                FullPath = s.FullPath,
+                Method = VerificationMethod.None,
+            }).ToList();
+
+            var targetFilename = IOPath.GetFileName(verifiedSources.First().FullPath);
+            var outputPath = IOPath.Combine(IOPath.GetTempPath(), "slskdn-swarm", $"{DateTime.UtcNow:yyyyMMdd_HHmmss}_{targetFilename}");
+
+            var downloadRequest = new MultiSourceDownloadRequest
+            {
+                Filename = verifiedSources.First().FullPath,
+                FileSize = request.Size,
+                OutputPath = outputPath,
+                Sources = verifiedSources,
+                ChunkSize = request.ChunkSize,
+            };
+
+            // Start in background - don't await
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await MultiSource.DownloadAsync(downloadRequest, System.Threading.CancellationToken.None);
+                }
+                catch (Exception ex)
+                {
+                    Log.Error(ex, "[SWARM ASYNC] Background download failed: {Message}", ex.Message);
+                }
+            });
+
+            // Give it a moment to start
+            await Task.Delay(500);
+
+            // Return the job ID for polling
+            return Ok(new
+            {
+                jobId = downloadRequest.Id,
+                message = "Swarm download started in background. Poll /api/v0/multisource/jobs/{jobId} for status.",
+                totalSources = allSources.Count,
+                totalChunks = (int)Math.Ceiling((double)request.Size / request.ChunkSize),
+            });
+        }
+
+        /// <summary>
+        ///     Get status of a running or completed swarm download job.
+        /// </summary>
+        /// <param name="jobId">The job ID.</param>
+        /// <returns>Job status and progress.</returns>
+        [HttpGet("jobs/{jobId}")]
+        [Authorize(Policy = AuthPolicy.Any)]
+        public IActionResult GetJobStatus(Guid jobId)
+        {
+            if (!MultiSource.ActiveDownloads.TryGetValue(jobId, out var status))
+            {
+                return NotFound(new { error = "Job not found. It may have completed or been cancelled." });
+            }
+
+            return Ok(new
+            {
+                jobId,
+                state = status.State.ToString(),
+                totalChunks = status.TotalChunks,
+                completedChunks = status.CompletedChunks,
+                percentComplete = status.TotalChunks > 0 ? (status.CompletedChunks * 100.0 / status.TotalChunks) : 0,
+                activeWorkers = status.ActiveWorkers,
+                chunksPerSecond = status.ChunksPerSecond,
+                estimatedSecondsRemaining = status.EstimatedSecondsRemaining,
+                bytesDownloaded = status.BytesDownloaded,
+                bytesDownloadedMB = status.BytesDownloaded / 1024.0 / 1024.0,
+            });
+        }
+
+        /// <summary>
+        ///     List all active swarm download jobs.
+        /// </summary>
+        /// <returns>List of active jobs.</returns>
+        [HttpGet("jobs")]
+        [Authorize(Policy = AuthPolicy.Any)]
+        public IActionResult ListJobs()
+        {
+            var jobs = MultiSource.ActiveDownloads.Select(kvp => new
+            {
+                jobId = kvp.Key,
+                state = kvp.Value.State.ToString(),
+                totalChunks = kvp.Value.TotalChunks,
+                completedChunks = kvp.Value.CompletedChunks,
+                percentComplete = kvp.Value.TotalChunks > 0 ? (kvp.Value.CompletedChunks * 100.0 / kvp.Value.TotalChunks) : 0,
+                chunksPerSecond = kvp.Value.ChunksPerSecond,
+            }).ToList();
+
+            return Ok(new { count = jobs.Count, jobs });
+        }
+
+        /// <summary>
         ///     Searches for files and returns candidates for multi-source download.
         /// </summary>
         /// <param name="searchText">The search query.</param>

@@ -60,7 +60,8 @@ namespace slskd.Transfers.MultiSource
         private ISoulseekClient Client { get; }
         private IContentVerificationService ContentVerification { get; }
         private ILogger Log { get; } = Serilog.Log.ForContext<MultiSourceDownloadService>();
-        private ConcurrentDictionary<Guid, MultiSourceDownloadStatus> ActiveDownloads { get; } = new();
+        /// <inheritdoc/>
+        public ConcurrentDictionary<Guid, MultiSourceDownloadStatus> ActiveDownloads { get; } = new();
 
         /// <inheritdoc/>
         public async Task<ContentVerificationResult> FindVerifiedSourcesAsync(
@@ -479,9 +480,10 @@ namespace slskd.Transfers.MultiSource
 
                     try
                     {
-                        // Enforce hard timeout on chunk download to prevent hanging
+                        // AGGRESSIVE timeout - 15s max per chunk to prevent stragglers
+                        // Fast peers do 128KB chunks in 1-3 seconds; 15s is plenty
                         using var chunkCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-                        chunkCts.CancelAfter(45000); // 45s max per chunk
+                        chunkCts.CancelAfter(15000); // 15s max per chunk
 
                         var result = await DownloadChunkAsync(
                             username,
@@ -509,8 +511,20 @@ namespace slskd.Transfers.MultiSource
                         }
                         else
                         {
+                            // Check for rejection (peer doesn't support partial downloads)
+                            var isRejection = result.Error?.Contains("reported as failed") == true ||
+                                              result.Error?.Contains("rejected") == true;
+
+                            // Immediately blacklist peers who reject - they won't support ANY chunks
+                            if (isRejection)
+                            {
+                                Log.Warning("[SWARM] {Username} rejected partial download - blacklisting", username);
+                                failedUsers.TryAdd(username, true);
+                                chunkQueue.Enqueue(chunk);
+                                break; // Exit this worker immediately
+                            }
+
                             // Don't count "Too slow" as a hard failure that kills the worker
-                            // This keeps the worker alive to try other chunks (or retry later)
                             var isSpeedFailure = result.Error?.Contains("Too slow") == true;
                             if (!isSpeedFailure)
                             {

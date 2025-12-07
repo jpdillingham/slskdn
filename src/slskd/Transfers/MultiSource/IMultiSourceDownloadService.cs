@@ -57,6 +57,11 @@ namespace slskd.Transfers.MultiSource
         /// <param name="downloadId">The download ID.</param>
         /// <returns>The download status, or null if not found.</returns>
         MultiSourceDownloadStatus GetStatus(Guid downloadId);
+
+        /// <summary>
+        ///     Gets all active downloads.
+        /// </summary>
+        System.Collections.Concurrent.ConcurrentDictionary<Guid, MultiSourceDownloadStatus> ActiveDownloads { get; }
     }
 
     /// <summary>
@@ -308,6 +313,36 @@ namespace slskd.Transfers.MultiSource
         /// </summary>
         /// <param name="bytes">Bytes to add.</param>
         public void AddBytesDownloaded(long bytes) => System.Threading.Interlocked.Add(ref bytesDownloaded, bytes);
+
+        /// <summary>
+        ///     Gets or sets the start time for rate calculation.
+        /// </summary>
+        public DateTime StartTime { get; set; } = DateTime.UtcNow;
+
+        /// <summary>
+        ///     Gets the chunks per second rate.
+        /// </summary>
+        public double ChunksPerSecond
+        {
+            get
+            {
+                var elapsed = (DateTime.UtcNow - StartTime).TotalSeconds;
+                return elapsed > 0 ? CompletedChunks / elapsed : 0;
+            }
+        }
+
+        /// <summary>
+        ///     Gets the estimated seconds remaining.
+        /// </summary>
+        public double EstimatedSecondsRemaining
+        {
+            get
+            {
+                var rate = ChunksPerSecond;
+                var remaining = TotalChunks - CompletedChunks;
+                return rate > 0 ? remaining / rate : -1;
+            }
+        }
     }
 
     /// <summary>

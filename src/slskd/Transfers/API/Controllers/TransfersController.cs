@@ -47,20 +47,24 @@ namespace slskd.Transfers.API
         /// <param name="optionsSnapshot"></param>
         /// <param name="transferService"></param>
         /// <param name="autoReplaceService"></param>
+        /// <param name="autoReplaceBackgroundService"></param>
         public TransfersController(
             ITransferService transferService,
             IOptionsSnapshot<Options> optionsSnapshot,
-            IAutoReplaceService autoReplaceService)
+            IAutoReplaceService autoReplaceService,
+            AutoReplaceBackgroundService autoReplaceBackgroundService)
         {
             Transfers = transferService;
             OptionsSnapshot = optionsSnapshot;
             AutoReplace = autoReplaceService;
+            AutoReplaceBackgroundService = autoReplaceBackgroundService;
         }
 
         private static SemaphoreSlim DownloadRequestLimiter { get; } = new SemaphoreSlim(2, 2);
         private ITransferService Transfers { get; }
         private IOptionsSnapshot<Options> OptionsSnapshot { get; }
         private IAutoReplaceService AutoReplace { get; }
+        private AutoReplaceBackgroundService AutoReplaceBackgroundService { get; }
         private ILogger Log { get; set; } = Serilog.Log.ForContext<TransfersController>();
 
         /// <summary>
@@ -593,7 +597,8 @@ namespace slskd.Transfers.API
             }
 
             var stuckCount = AutoReplace.GetStuckDownloads().Count();
-            return Ok(new { stuckCount, enabled = true });
+            var status = AutoReplaceBackgroundService.GetStatus();
+            return Ok(new { stuckCount, enabled = status.Enabled, intervalSeconds = status.IntervalSeconds });
         }
 
         /// <summary>

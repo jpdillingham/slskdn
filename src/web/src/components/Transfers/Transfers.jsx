@@ -4,17 +4,10 @@ import * as transfersLibrary from '../../lib/transfers';
 import { LoaderSegment, PlaceholderSegment } from '../Shared';
 import TransferGroup from './TransferGroup';
 import TransfersHeader from './TransfersHeader';
-import React, {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { toast } from 'react-toastify';
 
-const AUTO_REPLACE_INTERVAL_MS = 30_000; // Check every 30 seconds
-const AUTO_REPLACE_THRESHOLD = 5; // 5% size difference threshold
+const AUTO_REPLACE_THRESHOLD = 0; // 0% = exact match only (configurable on backend)
 
 const Transfers = ({ direction, server }) => {
   const [connecting, setConnecting] = useState(true);
@@ -26,7 +19,6 @@ const Transfers = ({ direction, server }) => {
 
   const [autoReplaceEnabled, setAutoReplaceEnabled] = useState(false);
   const autoReplaceThreshold = AUTO_REPLACE_THRESHOLD;
-  const autoReplaceIntervalRef = useRef(null);
 
   const fetch = async () => {
     try {
@@ -170,55 +162,41 @@ const Transfers = ({ direction, server }) => {
     setRemoving(false);
   };
 
-  // Auto-replace logic for stuck downloads
-  const processAutoReplace = useCallback(async () => {
-    if (!autoReplaceEnabled || direction !== 'download') {
-      return;
-    }
-
-    try {
-      const result = await autoReplaceLibrary.processStuckDownloads({
-        threshold: autoReplaceThreshold,
-      });
-
-      if (result?.replaced > 0) {
-        toast.success(`Auto-replaced ${result.replaced} stuck download(s)`);
-      }
-    } catch (error) {
-      console.error('Auto-replace error:', error);
-      // Don't toast on every interval failure, just log it
-    }
-  }, [autoReplaceEnabled, autoReplaceThreshold, direction]);
-
-  // Set up auto-replace interval
+  // Fetch auto-replace status from backend on mount
   useEffect(() => {
-    if (autoReplaceEnabled && direction === 'download') {
-      // Run immediately on enable
-      processAutoReplace();
+    const fetchAutoReplaceStatus = async () => {
+      if (direction !== 'download') {
+        return;
+      }
 
-      // Then run on interval
-      autoReplaceIntervalRef.current = window.setInterval(
-        processAutoReplace,
-        AUTO_REPLACE_INTERVAL_MS,
-      );
-
-      toast.info('Auto-replace enabled. Checking for stuck downloads...');
-    } else if (autoReplaceIntervalRef.current) {
-      clearInterval(autoReplaceIntervalRef.current);
-      autoReplaceIntervalRef.current = null;
-    }
-
-    return () => {
-      if (autoReplaceIntervalRef.current) {
-        clearInterval(autoReplaceIntervalRef.current);
+      try {
+        const status = await autoReplaceLibrary.getAutoReplaceStatus();
+        setAutoReplaceEnabled(status?.enabled ?? false);
+      } catch (error) {
+        console.error('Failed to fetch auto-replace status:', error);
       }
     };
-  }, [autoReplaceEnabled, direction, processAutoReplace]);
 
-  const handleAutoReplaceChange = (enabled) => {
-    setAutoReplaceEnabled(enabled);
-    if (!enabled) {
-      toast.info('Auto-replace disabled');
+    fetchAutoReplaceStatus();
+  }, [direction]);
+
+  // Handle auto-replace toggle via backend API
+  const handleAutoReplaceChange = async (enabled) => {
+    try {
+      if (enabled) {
+        await autoReplaceLibrary.enableAutoReplace();
+        setAutoReplaceEnabled(true);
+        toast.info(
+          'Auto-replace enabled. Backend will check for stuck downloads periodically.',
+        );
+      } else {
+        await autoReplaceLibrary.disableAutoReplace();
+        setAutoReplaceEnabled(false);
+        toast.info('Auto-replace disabled');
+      }
+    } catch (error) {
+      console.error('Failed to toggle auto-replace:', error);
+      toast.error('Failed to toggle auto-replace');
     }
   };
 

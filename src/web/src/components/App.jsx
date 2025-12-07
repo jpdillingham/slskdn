@@ -12,6 +12,11 @@ import Chat from './Chat/Chat';
 import LoginForm from './LoginForm';
 import Rooms from './Rooms/Rooms';
 import Searches from './Search/Searches';
+import {
+  isStatusBarVisible,
+  SlskdnStatusBar,
+  toggleStatusBarVisibility,
+} from './Shared';
 import ErrorSegment from './Shared/ErrorSegment';
 import System from './System/System';
 import Transfers from './Transfers/Transfers';
@@ -41,6 +46,7 @@ const initialState = {
     pending: false,
   },
   retriesExhausted: false,
+  statusBarVisible: isStatusBarVisible(),
 };
 
 const ModeSpecificConnectButton = ({
@@ -170,8 +176,22 @@ class App extends Component {
         );
     }
 
+    // Listen for status bar toggle from the status bar's close button
+    window.addEventListener('slskdn-status-toggle', this.handleStatusBarToggle);
+
     this.init();
   }
+
+  componentWillUnmount() {
+    window.removeEventListener(
+      'slskdn-status-toggle',
+      this.handleStatusBarToggle,
+    );
+  }
+
+  handleStatusBarToggle = () => {
+    this.setState({ statusBarVisible: isStatusBarVisible() });
+  };
 
   init = async () => {
     this.setState({ initialized: false }, async () => {
@@ -236,6 +256,11 @@ class App extends Component {
     });
   };
 
+  toggleStatusBar = () => {
+    const newVisible = toggleStatusBarVisibility();
+    this.setState({ statusBarVisible: newVisible });
+  };
+
   handleLogin = (username, password, rememberMe) => {
     this.setState(
       (previousState) => ({
@@ -277,6 +302,7 @@ class App extends Component {
       initialized,
       login,
       retriesExhausted,
+      statusBarVisible,
       theme = this.getSavedTheme() ||
         (window.matchMedia('(prefers-color-scheme: dark)').matches
           ? 'dark'
@@ -430,6 +456,19 @@ class App extends Component {
               className="right"
               inverted
             >
+              {!statusBarVisible && (
+                <Menu.Item
+                  className="slskdn-toggle"
+                  onClick={() => this.toggleStatusBar()}
+                  title="Show slskdn network status bar"
+                >
+                  <Icon
+                    color="blue"
+                    name="signal"
+                    size="small"
+                  />
+                </Menu.Item>
+              )}
               <Menu.Item onClick={() => this.toggleTheme()}>
                 <Icon name="theme" />
                 Theme
@@ -529,6 +568,7 @@ class App extends Component {
             </Menu>
           </Sidebar>
           <Sidebar.Pusher className="app-content">
+            <SlskdnStatusBar />
             <AppContext.Provider
               // eslint-disable-next-line no-warning-comments
               // TODO: needs useMemo, but class component. yolo for now.

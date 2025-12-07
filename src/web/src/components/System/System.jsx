@@ -5,6 +5,7 @@ import Events from './Events';
 import Files from './Files';
 import Info from './Info';
 import Logs from './Logs';
+import Network from './Network';
 import Options from './Options';
 import Shares from './Shares';
 import React from 'react';
@@ -47,6 +48,23 @@ const System = ({ options = {}, state = {}, theme }) => {
         </Tab.Pane>
       ),
       route: 'info',
+    },
+    {
+      menuItem: (
+        <Menu.Item key="network">
+          <Icon
+            color="blue"
+            name="sitemap"
+          />
+          Network
+        </Menu.Item>
+      ),
+      render: () => (
+        <Tab.Pane>
+          <Network />
+        </Tab.Pane>
+      ),
+      route: 'network',
     },
     {
       menuItem: {

@@ -125,6 +125,129 @@ body {
     background: var(--background-color);
 }
 
+/* slskdn Status Bar - Top bar */
+.slskdn-status-bar {
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+    background: linear-gradient(180deg, rgba(13,17,22,0.92) 0%, rgba(13,17,22,0.98) 100%);
+    border-bottom: 1px solid rgba(88,166,255,0.1);
+    padding: 4px 16px;
+    font-size: 11px;
+    color: #6e7681;
+    gap: 16px;
+}
+
+.slskdn-status-items {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.slskdn-status-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    color: #6e7681;
+    text-decoration: none;
+    transition: all 0.2s ease;
+}
+
+.slskdn-status-item:hover {
+    color: #58a6ff;
+    text-shadow: 0 0 8px rgba(88,166,255,0.5);
+}
+
+.slskdn-status-item span.active {
+    color: #58a6ff;
+    text-shadow: 0 0 6px rgba(88,166,255,0.4);
+}
+
+.slskdn-status-item span.syncing {
+    color: #d29922;
+    text-shadow: 0 0 6px rgba(210,153,34,0.5);
+    animation: pulse-glow 1.5s ease-in-out infinite;
+}
+
+.slskdn-status-item span.backfill {
+    color: #a371f7;
+    text-shadow: 0 0 6px rgba(163,113,247,0.5);
+}
+
+.slskdn-status-item .icon {
+    font-size: 10px !important;
+    margin: 0 !important;
+    filter: drop-shadow(0 0 2px currentColor);
+}
+
+.slskdn-status-item .ui.label {
+    font-size: 10px !important;
+    padding: 2px 6px !important;
+    box-shadow: 0 0 8px rgba(251,189,35,0.3);
+}
+
+.slskdn-status-divider {
+    color: rgba(88,166,255,0.2);
+    font-size: 10px;
+}
+
+.slskdn-status-right {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.slskdn-status-link {
+    color: #58a6ff;
+    text-decoration: none;
+    font-size: 10px;
+    opacity: 0.7;
+    transition: all 0.2s ease;
+}
+
+.slskdn-status-link:hover {
+    opacity: 1;
+    text-shadow: 0 0 8px rgba(88,166,255,0.5);
+}
+
+.slskdn-status-close {
+    background: none;
+    border: none;
+    color: #6e7681;
+    cursor: pointer;
+    font-size: 14px;
+    padding: 0 4px;
+    line-height: 1;
+    transition: all 0.2s ease;
+}
+
+.slskdn-status-close:hover {
+    color: #f85149;
+    text-shadow: 0 0 8px rgba(248,81,73,0.5);
+}
+
+@keyframes pulse-glow {
+    0%, 100% { text-shadow: 0 0 4px rgba(210,153,34,0.3); }
+    50% { text-shadow: 0 0 10px rgba(210,153,34,0.7); }
+}
+
+/* slskdn toggle button in nav bar */
+.slskdn-toggle.item {
+    padding: 0 8px !important;
+    min-width: auto !important;
+}
+
+.slskdn-toggle .icon {
+    margin: 0 !important;
+    filter: drop-shadow(0 0 4px rgba(88,166,255,0.6));
+    animation: toggle-pulse 2s ease-in-out infinite;
+}
+
+@keyframes toggle-pulse {
+    0%, 100% { filter: drop-shadow(0 0 3px rgba(88,166,255,0.4)); opacity: 0.7; }
+    50% { filter: drop-shadow(0 0 8px rgba(88,166,255,0.8)); opacity: 1; }
+}
+
 .navigation {
     overflow: overlay !important;
     position: sticky !important;

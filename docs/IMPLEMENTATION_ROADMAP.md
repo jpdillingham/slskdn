@@ -46,8 +46,7 @@ This document maps out the complete implementation path for building out the mul
 
 | Feature | Priority | Complexity |
 |---------|----------|------------|
-| DHT/Mesh Sync Protocol | HIGH | High |
-| Backfill Scheduler with rate limiting | MEDIUM | Medium |
+| **Phase 6: BitTorrent DHT Rendezvous** | HIGH | High |
 | Capability File sharing (`__slskdn_caps__`) | MEDIUM | Low |
 | Queue Reason field overloading | LOW | Low |
 | Small-world neighbor optimization | LOW | Medium |
@@ -339,6 +338,305 @@ CREATE TABLE MeshPeerState (
 
 ---
 
+## Phase 6: BitTorrent DHT Rendezvous Layer ⬜ PLANNED
+
+> **Status:** Designed, implementation pending
+
+### 6.0 Overview & Motivation
+
+**The Cold Start Problem:** When a new slskdn client starts up, or when a client has been offline for a while, it may have no mesh neighbors. Without mesh neighbors, it can't sync FLAC hashes, coordinate multi-source downloads, or benefit from the distributed network. How does it find other slskdn clients?
+
+**The Solution:** Use the **BitTorrent mainline DHT** as a decentralized "bulletin board" where slskdn clients advertise their presence and discover each other. This is purely a **rendezvous mechanism** - we don't store any file hashes or content in the DHT.
+
+### 6.1 Key Concepts
+
+| Concept | Description |
+|---------|-------------|
+| **Rendezvous Infohash** | A well-known SHA-1 hash derived from a magic string (e.g., `SHA1("slskdn-mesh-v1")`) that all slskdn clients agree on |
+| **Beacon** | An slskdn client that is publicly reachable, announces itself to the DHT, and accepts inbound overlay connections |
+| **Seeker** | An slskdn client behind NAT/firewall that queries the DHT and makes outbound connections to beacons |
+| **Overlay Port** | A separate TCP port (not Soulseek) where slskdn clients perform mesh handshakes and sync |
+
+### 6.2 How It Works
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                      BITTORRENT DHT (PUBLIC INFRASTRUCTURE)             │
+│                                                                         │
+│  ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐      │
+│  │  DHT Node       │    │  DHT Node       │    │  DHT Node       │      │
+│  │  (bootstrap)    │────│                 │────│                 │      │
+│  └─────────────────┘    └─────────────────┘    └─────────────────┘      │
+│                                 │                                        │
+│  Infohash: SHA1("slskdn-mesh-v1") = 0x1a2b3c4d...                       │
+│                                 │                                        │
+│           ┌─────────────────────┴─────────────────────┐                  │
+│           │                                           │                  │
+│      announce_peer()                            get_peers()              │
+│           │                                           │                  │
+└───────────┼───────────────────────────────────────────┼──────────────────┘
+            │                                           │
+            ▼                                           ▼
+    ┌───────────────┐                           ┌───────────────┐
+    │   BEACON      │◄─────TCP overlay────────────│   SEEKER      │
+    │   (slskdn)    │     connect + handshake     │   (slskdn)    │
+    │               │                             │               │
+    │ - Public IP   │                             │ - Behind NAT  │
+    │ - Overlay:50305│                            │ - Can connect │
+    │ - DHT announce │                            │   outbound    │
+    └───────────────┘                           └───────────────┘
+            │                                           │
+            │         Once connected, both use         │
+            │         existing mesh sync protocol      │
+            │                                           │
+            ▼                                           ▼
+    ┌───────────────────────────────────────────────────────────┐
+    │              MESH SYNC (EXISTING PHASE 3)                 │
+    │  HELLO → REQ_DELTA → PUSH_DELTA → FLAC hashes shared     │
+    └───────────────────────────────────────────────────────────┘
+```
+
+### 6.3 Overlay Handshake Protocol
+
+The overlay connection uses a simple JSON-over-TCP protocol:
+
+**Client → Beacon (mesh_hello):**
+```json
+{
+  "magic": "SLSKDNM1",
+  "type": "mesh_hello",
+  "version": 1,
+  "username": "<SoulseekUsername>",
+  "features": ["mesh", "flac_hash", "multipart", "swarm"],
+  "soulseek_ports": {
+    "peer": 50300,
+    "file": 50301
+  }
+}
+```
+
+**Beacon → Client (mesh_hello_ack):**
+```json
+{
+  "magic": "SLSKDNM1",
+  "type": "mesh_hello_ack",
+  "version": 1,
+  "username": "<TheirSoulseekUsername>",
+  "features": ["mesh", "flac_hash", "multipart", "swarm"],
+  "soulseek_ports": {
+    "peer": 50300,
+    "file": 50301
+  }
+}
+```
+
+**Validation:**
+- `magic` MUST equal `"SLSKDNM1"`
+- `type` MUST be `"mesh_hello"` or `"mesh_hello_ack"`
+- Reject if payload > 4KB or invalid JSON
+
+### 6.4 Configuration
+
+```yaml
+# appsettings.yml
+mesh:
+  overlay:
+    enabled: true
+    port: 50305                    # Overlay TCP listener port
+  dht:
+    enabled: true
+    bootstrap_nodes:              # Standard BitTorrent DHT bootstrap
+      - "router.bittorrent.com:6881"
+      - "dht.transmissionbt.com:6881"
+      - "router.utorrent.com:6881"
+    announce_interval: 900        # 15 minutes
+    discovery_interval: 600       # 10 minutes
+    min_neighbors: 3              # Trigger discovery below this
+    rendezvous_keys:
+      - "slskdn-mesh-v1"
+      - "slskdn-mesh-v1-backup-1"
+```
+
+### 6.5 Components to Implement
+
+#### Component 1: DhtRendezvousService
+
+```csharp
+public interface IDhtRendezvousService
+{
+    /// <summary>True if we can accept inbound connections (public IP).</summary>
+    bool IsBeaconCapable { get; }
+    
+    /// <summary>Start DHT node and begin announce/discovery loops.</summary>
+    Task StartAsync(CancellationToken ct);
+    
+    /// <summary>Stop DHT node.</summary>
+    Task StopAsync();
+    
+    /// <summary>Get current list of discovered peer endpoints.</summary>
+    IReadOnlyList<IPEndPoint> GetDiscoveredPeers();
+    
+    /// <summary>Force a discovery cycle.</summary>
+    Task DiscoverPeersAsync(CancellationToken ct);
+}
+```
+
+**Responsibilities:**
+1. Initialize DHT node on startup
+2. Determine beacon capability (NAT detection via UPnP/STUN)
+3. If beacon: announce to DHT every `announce_interval`
+4. If mesh neighbors < `min_neighbors`: run discovery cycle
+5. Hand discovered endpoints to `MeshOverlayConnector`
+
+#### Component 2: MeshOverlayServer
+
+```csharp
+public interface IMeshOverlayServer
+{
+    /// <summary>Start listening for inbound overlay connections.</summary>
+    Task StartAsync(CancellationToken ct);
+    
+    /// <summary>Stop listening.</summary>
+    Task StopAsync();
+    
+    /// <summary>Current active connections.</summary>
+    int ActiveConnections { get; }
+}
+```
+
+**Responsibilities:**
+1. Listen on overlay port (if beacon capable)
+2. Accept TCP connections
+3. Read/validate `mesh_hello` message
+4. Send `mesh_hello_ack` response
+5. Register peer and hand connection to `IMeshSyncService`
+
+#### Component 3: MeshOverlayConnector
+
+```csharp
+public interface IMeshOverlayConnector
+{
+    /// <summary>Attempt to connect to candidate endpoints.</summary>
+    Task ConnectToCandidatesAsync(
+        IEnumerable<IPEndPoint> candidates, 
+        CancellationToken ct);
+}
+```
+
+**Flow:**
+```csharp
+foreach (var endpoint in candidates.Shuffle())
+{
+    if (AlreadyConnected(endpoint)) continue;
+    if (MeshNeighborCount >= MaxNeighbors) break;
+    
+    try
+    {
+        using var tcp = new TcpClient();
+        await tcp.ConnectAsync(endpoint, TimeSpan.FromSeconds(10), ct);
+        
+        // Send HELLO
+        await SendMeshHelloAsync(tcp.GetStream());
+        
+        // Read ACK (with timeout)
+        var ack = await ReadMeshHelloAckAsync(tcp.GetStream(), ct);
+        if (!IsValid(ack)) continue;
+        
+        // Success! Register and hand off
+        MeshNeighborRegistry.Register(ack.Username, endpoint, tcp);
+        MeshSyncService.AttachConnection(ack.Username, tcp.GetStream());
+    }
+    catch { /* try next candidate */ }
+}
+```
+
+### 6.6 NAT/Firewall Behavior
+
+| Client Type | DHT Actions | Overlay Actions |
+|-------------|-------------|-----------------|
+| **Beacon** (public IP) | `announce_peer()` + `get_peers()` | Accept inbound TCP, make outbound |
+| **Seeker** (behind NAT) | `get_peers()` only | Make outbound TCP only |
+
+**Key insight:** Even firewalled clients can:
+1. Query the DHT (outbound UDP)
+2. Connect to beacons (outbound TCP)
+3. Maintain persistent connections for mesh sync
+
+### 6.7 Multiple Rendezvous Keys
+
+Support multiple infohashes for resilience and future migrations:
+
+```csharp
+static readonly byte[][] RendezvousKeys = new[]
+{
+    SHA1.Hash("slskdn-mesh-v1"),         // Primary
+    SHA1.Hash("slskdn-mesh-v1-backup-1"), // Backup
+    SHA1.Hash("slskdn-mesh-v1-backup-2"), // Backup
+};
+```
+
+Beacons announce to ALL keys. Seekers query ALL keys and merge/dedupe results.
+
+### 6.8 Security Considerations
+
+| Risk | Mitigation |
+|------|------------|
+| Impersonation | Soulseek username in handshake; can verify via actual Soulseek connection |
+| DoS via fake announcements | Rate-limit connections per IP; validate handshake before registering |
+| Privacy (IP exposure) | Only public IPs are exposed; same as normal Soulseek |
+| Spam peers | Disconnect peers that send invalid data; maintain blocklist |
+
+### 6.9 Integration with Existing Systems
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    STARTUP SEQUENCE                             │
+├─────────────────────────────────────────────────────────────────┤
+│ 1. Start Soulseek connection (existing)                         │
+│ 2. Start DhtRendezvousService                                   │
+│    - Bootstrap DHT node                                         │
+│    - Detect NAT/beacon capability                              │
+│ 3. If beacon: Start MeshOverlayServer                          │
+│ 4. If beacon: Begin DHT announce loop                          │
+│ 5. If mesh neighbors < min: Begin DHT discovery loop           │
+│    - Query DHT → Get endpoints → MeshOverlayConnector          │
+│ 6. Hand successful connections to MeshSyncService (Phase 3)    │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### 6.10 Files to Create
+
+| File | Description |
+|------|-------------|
+| `src/slskd/DhtRendezvous/IDhtRendezvousService.cs` | Interface |
+| `src/slskd/DhtRendezvous/DhtRendezvousService.cs` | DHT bootstrap, announce, discover |
+| `src/slskd/DhtRendezvous/IMeshOverlayServer.cs` | Interface |
+| `src/slskd/DhtRendezvous/MeshOverlayServer.cs` | TCP listener for overlay |
+| `src/slskd/DhtRendezvous/IMeshOverlayConnector.cs` | Interface |
+| `src/slskd/DhtRendezvous/MeshOverlayConnector.cs` | Outbound connection logic |
+| `src/slskd/DhtRendezvous/Messages/OverlayMessages.cs` | mesh_hello/ack DTOs |
+| `src/slskd/DhtRendezvous/API/DhtRendezvousController.cs` | Status endpoints |
+
+### 6.11 Dependencies
+
+**BitTorrent DHT Library Options (C#):**
+- `MonoTorrent` - Full-featured, well-maintained
+- `BencodeNET` + custom DHT - Lighter weight
+- Port from existing Python/Go implementation
+
+### 6.12 API Endpoints (Planned)
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /api/v0/dht/status` | DHT node status, beacon capability |
+| `GET /api/v0/dht/peers` | Discovered overlay endpoints |
+| `GET /api/v0/dht/announce` | Force announce (beacon only) |
+| `POST /api/v0/dht/discover` | Force discovery cycle |
+| `GET /api/v0/overlay/connections` | Active overlay connections |
+| `GET /api/v0/overlay/stats` | Connection statistics |
+
+---
+
 ## Implementation Order
 
 ### Sprint 1: Foundation ✅ COMPLETE
@@ -356,11 +654,19 @@ CREATE TABLE MeshPeerState (
 8. ✅ Add mesh delta sync logic
 9. ⬜ Integrate mesh sync triggers into peer interactions (needs Soulseek transport)
 
-### Sprint 4: Polish & Testing (In Progress)
-10. ✅ API endpoints for hash DB / capabilities / mesh / backfill (complete)
-11. ⬜ Web UI integration (optional)
-12. ⬜ Load testing with real network
-13. ✅ Documentation updates
+### Sprint 4: DHT Rendezvous (Phase 6) ⬜ NEXT
+10. ⬜ Select/integrate BitTorrent DHT library
+11. ⬜ Implement `DhtRendezvousService` (bootstrap, announce, discover)
+12. ⬜ Implement `MeshOverlayServer` (TCP listener, handshake)
+13. ⬜ Implement `MeshOverlayConnector` (outbound connections)
+14. ⬜ NAT detection / beacon capability check
+15. ⬜ Integration with existing `MeshSyncService`
+
+### Sprint 5: Polish & Testing
+16. ✅ API endpoints for hash DB / capabilities / mesh / backfill (complete)
+17. ✅ Web UI status bar and Network dashboard (complete)
+18. ⬜ Load testing with real network
+19. ✅ Documentation updates
 
 ---
 

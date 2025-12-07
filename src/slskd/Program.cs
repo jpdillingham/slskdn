@@ -714,6 +714,9 @@ namespace slskd
             services.AddSingleton<Transfers.MultiSource.Discovery.ISourceDiscoveryService, Transfers.MultiSource.Discovery.SourceDiscoveryService>();
             services.AddHostedService(provider => (Transfers.MultiSource.Discovery.SourceDiscoveryService)provider.GetRequiredService<Transfers.MultiSource.Discovery.ISourceDiscoveryService>());
 
+            // Capability discovery service (Phase 1)
+            services.AddSingleton<Capabilities.ICapabilityService, Capabilities.CapabilityService>();
+
             services.AddSingleton<IRelayService, RelayService>();
 
             services.AddSingleton<IFTPClientFactory, FTPClientFactory>();

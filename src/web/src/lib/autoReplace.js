@@ -74,10 +74,29 @@ export const processStuckDownloads = async ({ threshold = 5 }) => {
 };
 
 /**
- * Get auto-replace configuration/status.
+ * Get auto-replace configuration/status from the legacy endpoint.
  * @returns {Promise<object>} The auto-replace status.
  */
 export const getAutoReplaceStatus = async () => {
-  const response = await api.get('/transfers/downloads/auto-replace/status');
+  // Use the new backend API endpoint
+  const response = await api.get('/autoreplace');
+  return response.data;
+};
+
+/**
+ * Enable auto-replace via backend API.
+ * @returns {Promise<object>} The updated status.
+ */
+export const enableAutoReplace = async () => {
+  const response = await api.put('/autoreplace/enable');
+  return response.data;
+};
+
+/**
+ * Disable auto-replace via backend API.
+ * @returns {Promise<object>} The updated status.
+ */
+export const disableAutoReplace = async () => {
+  const response = await api.put('/autoreplace/disable');
   return response.data;
 };

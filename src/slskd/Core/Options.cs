@@ -1419,9 +1419,18 @@ namespace slskd
             /// </summary>
             [Argument(default, "auto-replace-threshold")]
             [EnvironmentVariable("AUTO_REPLACE_THRESHOLD")]
-            [Description("maximum size difference percentage for alternative sources")]
-            [Range(1, 100)]
-            public double SizeThresholdPercent { get; init; } = 5.0;
+            [Description("maximum size difference percentage for alternative sources (0 = exact match only)")]
+            [Range(0, 100)]
+            public double SizeThresholdPercent { get; init; } = 0.0;
+
+            /// <summary>
+            ///     Gets the maximum number of retry attempts before giving up on a download.
+            /// </summary>
+            [Argument(default, "auto-replace-max-retries")]
+            [EnvironmentVariable("AUTO_REPLACE_MAX_RETRIES")]
+            [Description("maximum retry attempts before giving up on a download (0 = unlimited)")]
+            [Range(0, 100)]
+            public int MaxRetries { get; init; } = 3;
         }
 
         /// <summary>

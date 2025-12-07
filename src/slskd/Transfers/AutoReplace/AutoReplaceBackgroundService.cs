@@ -181,14 +181,21 @@ namespace slskd.Transfers.AutoReplace
                 {
                     var json = System.IO.File.ReadAllText(StateFilePath);
                     var state = JsonSerializer.Deserialize<AutoReplaceState>(json);
-                    IsEnabled = state?.Enabled ?? false;
+                    IsEnabled = state?.Enabled ?? true;
                     Log.Debug("Loaded auto-replace state: enabled={Enabled}", IsEnabled);
+                }
+                else
+                {
+                    // Default to enabled on first run
+                    IsEnabled = true;
+                    SaveState();
+                    Log.Information("Auto-replace state file not found, defaulting to enabled");
                 }
             }
             catch (Exception ex)
             {
-                Log.Warning(ex, "Failed to load auto-replace state, defaulting to disabled");
-                IsEnabled = false;
+                Log.Warning(ex, "Failed to load auto-replace state, defaulting to enabled");
+                IsEnabled = true;
             }
         }
 

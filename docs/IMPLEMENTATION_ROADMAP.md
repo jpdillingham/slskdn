@@ -201,124 +201,48 @@ CREATE TABLE MeshPeerState (
 
 ---
 
-## Phase 3: DHT/Epidemic Mesh Sync Protocol
+## Phase 3: DHT/Epidemic Mesh Sync Protocol ✅ COMPLETE
 
-### 3.1 Overview
+> **Status:** Implemented and tested. Commit `fba4ccab`
 
-Instead of traditional Kademlia DHT (requires dedicated routing, always-on supernodes), implement **gossip-based eventual consistency** where every `slskdn` client exchanges hash databases during normal Soulseek interactions.
+### 3.1 Wire Protocol Messages ✅
 
-### 3.2 Wire Protocol Messages
+| Message | Purpose |
+|---------|---------|
+| `HELLO` | Handshake with latest_seq_id, hash_count |
+| `REQ_DELTA` | Request entries since sequence ID |
+| `PUSH_DELTA` | Push entries (paginated with has_more) |
+| `REQ_KEY` | Lookup specific hash key |
+| `RESP_KEY` | Key lookup response |
+| `ACK` | Acknowledge receipt with merge count |
 
-**Transport:** Over existing Soulseek peer connections using the "reason" field or via virtual file transfer.
+### 3.2 API Endpoints ✅
 
-#### Message Types
+| Endpoint | Description |
+|----------|-------------|
+| `GET /api/v0/mesh/stats` | Sync statistics |
+| `GET /api/v0/mesh/peers` | Mesh-capable peers |
+| `GET /api/v0/mesh/hello` | Generate HELLO message |
+| `GET /api/v0/mesh/delta` | Get delta entries |
+| `GET /api/v0/mesh/lookup/{key}` | Lookup hash |
+| `POST /api/v0/mesh/publish` | Publish new hash |
+| `POST /api/v0/mesh/sync/{username}` | Trigger sync |
+| `POST /api/v0/mesh/message` | Handle incoming message |
+| `POST /api/v0/mesh/merge` | Merge entries from peer |
 
-```csharp
-public enum MeshMessageType
-{
-    Hello = 1,
-    ReqDelta = 2,
-    PushDelta = 3,
-    ReqKey = 4,
-    RespKey = 5,
-}
+### 3.3 Sync Constraints ✅
 
-public class MeshHelloMessage
-{
-    public string ClientId { get; set; }      // Username
-    public int ProtocolVersion { get; set; }   // 1
-    public long LatestSeqId { get; set; }      // Highest local seq
-}
-
-public class MeshReqDeltaMessage
-{
-    public long SinceSeqId { get; set; }
-    public int MaxEntries { get; set; }        // Default 1000
-}
-
-public class MeshPushDeltaMessage
-{
-    public List<MeshHashEntry> Entries { get; set; }
-}
-
-public class MeshHashEntry
-{
-    public long SeqId { get; set; }
-    public string FlacKey { get; set; }        // sha1(norm_filename + ':' + size)
-    public byte[] FlacMd5 { get; set; }        // 16 bytes
-    public long Size { get; set; }
-    public int? MetaFlags { get; set; }
-}
-
-public class MeshReqKeyMessage
-{
-    public string FlacKey { get; set; }
-}
-
-public class MeshRespKeyMessage
-{
-    public string FlacKey { get; set; }
-    public byte[] FlacMd5 { get; set; }        // Null if not found
-    public long? Size { get; set; }
-}
-```
-
-### 3.3 Sync Flow
-
-```
-When client A connects to mesh-capable client B:
-
-1. A → B: MESH_HELLO { latest_seq_id: 50000 }
-2. B → A: MESH_HELLO { latest_seq_id: 47000 }
-
-3. B sees A has newer entries:
-   B → A: MESH_REQ_DELTA { since_seq_id: 47000, max_entries: 1000 }
-   A → B: MESH_PUSH_DELTA { entries: [...] }
-
-4. A sees B might have entries A is missing:
-   A → B: MESH_REQ_DELTA { since_seq_id: 45000, max_entries: 1000 }
-   B → A: MESH_PUSH_DELTA { entries: [...] }
-
-5. Both clients merge received entries, updating their local DBs.
-```
-
-### 3.4 Implementation Files
-
-**Files to create:**
-- `src/slskd/Mesh/IMeshSyncService.cs` (NEW)
-- `src/slskd/Mesh/MeshSyncService.cs` (NEW)
-- `src/slskd/Mesh/Messages/` (NEW - message classes)
-- `src/slskd/Mesh/MeshProtocolHandler.cs` (NEW)
-
-**Key service interface:**
-
-```csharp
-public interface IMeshSyncService
-{
-    /// <summary>Initiates mesh sync with a peer if they support it.</summary>
-    Task TrySyncWithPeerAsync(string username, CancellationToken ct = default);
-    
-    /// <summary>Handles incoming mesh message from a peer.</summary>
-    Task HandleMeshMessageAsync(string fromUser, byte[] data, CancellationToken ct = default);
-    
-    /// <summary>Looks up hash in local DB first, then queries mesh neighbors.</summary>
-    Task<byte[]> LookupHashAsync(string flacKey, CancellationToken ct = default);
-    
-    /// <summary>Publishes a newly discovered hash to the mesh.</summary>
-    Task PublishHashAsync(string flacKey, byte[] flacMd5, long size, CancellationToken ct = default);
-    
-    /// <summary>Gets mesh sync statistics.</summary>
-    MeshSyncStats GetStats();
-}
-```
-
-### 3.5 Sync Constraints
-
-| Parameter | Default | Description |
-|-----------|---------|-------------|
+| Parameter | Value | Description |
+|-----------|-------|-------------|
 | `MESH_SYNC_INTERVAL_MIN` | 1800s | Min seconds between syncs with same peer |
 | `MESH_MAX_ENTRIES_PER_SYNC` | 1000 | Max entries exchanged per session |
 | `MESH_MAX_PEERS_PER_CYCLE` | 5 | Max peers to sync with per time window |
+
+### Files Created:
+- `src/slskd/Mesh/IMeshSyncService.cs` ✅
+- `src/slskd/Mesh/MeshSyncService.cs` ✅
+- `src/slskd/Mesh/Messages/MeshMessages.cs` ✅
+- `src/slskd/Mesh/API/MeshController.cs` ✅
 
 ---
 
@@ -465,10 +389,10 @@ POST /api/v0/backfill/trigger
 5. ⬜ Add passive hash collection from downloads
 6. ⬜ Create `BackfillSchedulerService` (basic)
 
-### Sprint 3: Mesh Sync (Pending)
-7. ⬜ Create `MeshSyncService` with protocol handlers
-8. ⬜ Integrate mesh sync triggers into peer interactions
-9. ⬜ Add mesh delta sync logic
+### Sprint 3: Mesh Sync ✅ COMPLETE
+7. ✅ Create `MeshSyncService` with protocol handlers (commit `fba4ccab`)
+8. ✅ Add mesh delta sync logic
+9. ⬜ Integrate mesh sync triggers into peer interactions (needs Soulseek transport)
 
 ### Sprint 4: Polish & Testing (Pending)
 10. ✅ API endpoints for hash DB / capabilities (complete)

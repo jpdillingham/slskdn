@@ -303,9 +303,29 @@ GET  /api/v0/hashdb/sync/since/{seq}     → Delta sync endpoint
 POST /api/v0/hashdb/sync/merge           → Receive mesh entries
 ```
 
-### Phase 3: DHT/Mesh Sync Protocol ⬜ PENDING
+### Phase 3: DHT/Mesh Sync Protocol ✅ COMPLETE
 
-Will implement gossip-based eventual consistency for hash sharing between `slskdn` clients.
+Implemented gossip-based eventual consistency for hash sharing between `slskdn` clients.
+
+**Wire Protocol Messages:**
+- `HELLO` - Handshake with latest_seq_id, hash_count
+- `REQ_DELTA` - Request entries since sequence ID
+- `PUSH_DELTA` - Push entries (paginated)
+- `REQ_KEY` / `RESP_KEY` - Lookup specific hash
+
+**API Endpoints:**
+```
+GET  /api/v0/mesh/stats              → Sync statistics
+GET  /api/v0/mesh/peers              → Mesh-capable peers
+GET  /api/v0/mesh/delta?sinceSeq=    → Get delta entries
+POST /api/v0/mesh/publish            → Publish new hash
+POST /api/v0/mesh/sync/{username}    → Trigger sync with peer
+```
+
+**Sync Constraints:**
+- Min interval: 30 minutes between syncs with same peer
+- Max entries: 1000 per sync session
+- Max peers: 5 per sync cycle
 
 ### Phase 4: Backfill Scheduler ⬜ PENDING
 

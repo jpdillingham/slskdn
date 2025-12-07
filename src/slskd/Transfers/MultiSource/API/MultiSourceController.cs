@@ -25,6 +25,7 @@ namespace slskd.Transfers.MultiSource.API
     using Microsoft.AspNetCore.Authorization;
     using Microsoft.AspNetCore.Mvc;
     using Serilog;
+    using slskd.Transfers.MultiSource.Discovery;
     using Soulseek;
     using IOPath = System.IO.Path;
 
@@ -44,19 +45,23 @@ namespace slskd.Transfers.MultiSource.API
         /// <param name="multiSourceService">The multi-source download service.</param>
         /// <param name="soulseekClient">The Soulseek client.</param>
         /// <param name="transferService">The transfer service.</param>
+        /// <param name="discoveryService">The source discovery service.</param>
         public MultiSourceController(
             IMultiSourceDownloadService multiSourceService,
             ISoulseekClient soulseekClient,
-            ITransferService transferService)
+            ITransferService transferService,
+            ISourceDiscoveryService discoveryService)
         {
             MultiSource = multiSourceService;
             Client = soulseekClient;
             Transfers = transferService;
+            Discovery = discoveryService;
         }
 
         private IMultiSourceDownloadService MultiSource { get; }
         private ISoulseekClient Client { get; }
         private ITransferService Transfers { get; }
+        private ISourceDiscoveryService Discovery { get; }
         private ILogger Log { get; } = Serilog.Log.ForContext<MultiSourceController>();
 
         // Store last search results for drill-down
@@ -410,48 +415,68 @@ namespace slskd.Transfers.MultiSource.API
         [Authorize(Policy = AuthPolicy.Any)]
         public async Task<IActionResult> SwarmDownload([FromBody] SwarmDownloadRequest request)
         {
-            if (string.IsNullOrWhiteSpace(request?.Filename) || request.Size == 0)
+            if (request.Size == 0)
             {
-                return BadRequest("Filename and size are required. Use search term for filename, exact size in bytes.");
+                return BadRequest("Size is required (exact file size in bytes).");
             }
 
-            Log.Information("[SWARM] Starting swarm download: {Filename} ({Size} bytes)", request.Filename, request.Size);
+            Log.Information("[SWARM] Starting swarm download: {Filename} ({Size} bytes, useDb={UseDb})", request.Filename, request.Size, request.UseDiscoveryDb);
 
-            // Search for ALL sources
-            var searchTerm = request.Filename;
-            var searchResults = new List<SearchResponse>();
-
-            try
-            {
-                await Client.SearchAsync(
-                    SearchQuery.FromText(searchTerm),
-                    responseHandler: (response) => searchResults.Add(response),
-                    options: new SearchOptions(
-                        searchTimeout: request.SearchTimeout,
-                        responseLimit: 2000,
-                        fileLimit: 100000,
-                        filterResponses: true,
-                        minimumResponseFileCount: 1));
-            }
-            catch (Exception ex)
-            {
-                return StatusCode(500, new { error = $"Search failed: {ex.Message}" });
-            }
-
-            Log.Information("[SWARM] Search complete: {Count} responses", searchResults.Count);
-
-            // Find ALL sources with MATCHING SIZE
             var allSources = new List<(string Username, string FullPath, int Speed)>();
 
-            foreach (var response in searchResults)
+            // Option 1: Use pre-built discovery database (much faster, more sources)
+            if (request.UseDiscoveryDb)
             {
-                foreach (var file in response.Files)
+                var dbSources = Discovery.GetSourcesBySize(request.Size, 100);
+                Log.Information("[SWARM] Discovery DB returned {Count} sources for size {Size}", dbSources.Count, request.Size);
+
+                foreach (var src in dbSources)
                 {
-                    if (file.Size == request.Size)
+                    if (!allSources.Any(s => s.Username.Equals(src.Username, StringComparison.OrdinalIgnoreCase)))
                     {
-                        if (!allSources.Any(s => s.Username.Equals(response.Username, StringComparison.OrdinalIgnoreCase)))
+                        allSources.Add((src.Username, src.Filename, src.UploadSpeed));
+                    }
+                }
+            }
+            else
+            {
+                // Option 2: Do a fresh search (slower, may find fewer sources)
+                if (string.IsNullOrWhiteSpace(request.Filename))
+                {
+                    return BadRequest("Filename is required when not using discovery DB.");
+                }
+
+                var searchResults = new List<SearchResponse>();
+
+                try
+                {
+                    await Client.SearchAsync(
+                        SearchQuery.FromText(request.Filename),
+                        responseHandler: (response) => searchResults.Add(response),
+                        options: new SearchOptions(
+                            searchTimeout: request.SearchTimeout,
+                            responseLimit: 2000,
+                            fileLimit: 100000,
+                            filterResponses: true,
+                            minimumResponseFileCount: 1));
+                }
+                catch (Exception ex)
+                {
+                    return StatusCode(500, new { error = $"Search failed: {ex.Message}" });
+                }
+
+                Log.Information("[SWARM] Search complete: {Count} responses", searchResults.Count);
+
+                foreach (var response in searchResults)
+                {
+                    foreach (var file in response.Files)
+                    {
+                        if (file.Size == request.Size)
                         {
-                            allSources.Add((response.Username, file.Filename, response.UploadSpeed));
+                            if (!allSources.Any(s => s.Username.Equals(response.Username, StringComparison.OrdinalIgnoreCase)))
+                            {
+                                allSources.Add((response.Username, file.Filename, response.UploadSpeed));
+                            }
                         }
                     }
                 }
@@ -1050,19 +1075,22 @@ namespace slskd.Transfers.MultiSource.API
     /// </summary>
     public class SwarmDownloadRequest
     {
-        /// <summary>Gets or sets the filename to search for.</summary>
+        /// <summary>Gets or sets the filename/search term (optional if using discovery DB).</summary>
         public string Filename { get; set; }
 
         /// <summary>Gets or sets the exact file size.</summary>
         public long Size { get; set; }
 
-        /// <summary>Gets or sets the chunk size (default 256KB).</summary>
+        /// <summary>Gets or sets the chunk size (default 128KB).</summary>
         public int ChunkSize { get; set; } = 128 * 1024;
 
-        /// <summary>Gets or sets the search timeout in ms (default 30s).</summary>
+        /// <summary>Gets or sets the search timeout in ms (default 30s). Only used if not using discovery DB.</summary>
         public int SearchTimeout { get; set; } = 30000;
 
         /// <summary>Gets or sets whether to skip verification (faster).</summary>
         public bool SkipVerification { get; set; } = true;
+
+        /// <summary>Gets or sets whether to use the pre-built discovery database instead of a fresh search (default true).</summary>
+        public bool UseDiscoveryDb { get; set; } = true;
     }
 }

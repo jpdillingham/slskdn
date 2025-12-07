@@ -208,6 +208,490 @@ The following analysis outlines potential extension points within the existing S
 1.  **No dynamic source discovery**: Pool is built once at start; new sources aren't discovered mid-download (Search could be re-run).
 2.  **Progress reporting**: Live progress could be improved for frontend integration.
 
+---
+
+## Distributed Hash Network & Non-Abusive Backfill Architecture
+
+This section defines the complete architecture for building a distributed FLAC hash database across `slskdn` nodes, enabling instant content verification without redundant header probing.
+
+### Design Principles
+
+- **Prioritize DHT over sniffing**: Never header-probe a peer if a distributed hash lookup can answer the question.
+- **Strict rate limiting**: No peer receives more than N header probes per day, regardless of how many files they share.
+- **Passive indexing first**: Build inventory from metadata already retrieved during normal browsing/searching.
+- **Graceful degradation**: Legacy clients remain fully functional; extensions are invisible to them.
+
+### Core Data Structures
+
+Three local tables form the foundation:
+
+#### 1. Peers Table
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `peer_id` | TEXT PK | Soulseek username |
+| `caps` | INTEGER | Bitfield: `supports_dht`, `supports_hash_exchange`, etc. |
+| `last_seen` | INTEGER | Unix timestamp |
+| `last_cap_check` | INTEGER | Unix timestamp of last capability probe |
+
+#### 2. FLAC Inventory Table
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `file_id` | TEXT PK | Stable hash: `sha256(peer_id + path + size)` |
+| `peer_id` | TEXT FK | Owner username |
+| `path` | TEXT | Full remote path |
+| `size` | INTEGER | File size in bytes |
+| `discovered_at` | INTEGER | Unix timestamp |
+| `hash_status` | TEXT | `none` / `known` / `pending` / `failed` |
+| `hash_value` | TEXT | FLAC STREAMINFO MD5 (nullable) |
+| `source` | TEXT | `local_scan` / `peer_dht` / `backfill_sniff` |
+
+#### 3. Backfill Scheduler State
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `per_peer_daily_budget` | 10 | Max header probes per peer per 24h |
+| `global_concurrent_backfills` | 1 | Max simultaneous backfill connections |
+| `backfill_run_interval` | 600s | Scheduler wake interval |
+| `min_idle_time` | 300s | Required idle time before backfill |
+| `max_header_bytes` | 65536 | Bytes to read per probe (64KB) |
+
+---
+
+### Phase 1: Capability Discovery
+
+Detect whether a peer supports DHT/hash exchange before any header probing.
+
+#### Advertisement Methods
+
+**Option A: UserInfo Tag**
+
+Append machine-readable capability string to user description:
+```
+... | slskdn_caps:v1;dht=1;hashx=1
+```
+
+**Option B: Capability File**
+
+Share a virtual file at a known path:
+```
+__slskdn_caps__.json
+```
+
+Contents:
+```json
+{
+  "client": "slskdn",
+  "version": "1.0.0",
+  "features": ["dht", "hash_exchange", "flac_hash_db"]
+}
+```
+
+#### Discovery Logic
+
+On any peer interaction (search result, browse, user info):
+
+```
+if peer not in peers_table:
+    insert(peer_id, caps=0)
+
+detected_caps = parse_userinfo_tag(peer) OR probe_caps_file(peer)
+
+if detected_caps != 0:
+    peers_table[peer].caps = detected_caps
+    peers_table[peer].last_cap_check = now()
+```
+
+**Rule**: If `caps.supports_dht == true`, never schedule header-sniff backfill for this peer.
+
+---
+
+### Phase 2: FLAC Inventory Building
+
+Index FLAC files passively from normal operations.
+
+#### Passive Collection
+
+When fetching any peer's share list:
+
+```
+for file in peer_shares:
+    if file.extension == ".flac":
+        id = stable_hash(peer_id, file.path, file.size)
+        if id not in flac_inventory:
+            insert(id, peer_id, file.path, file.size, now(), "none", null, "passive")
+```
+
+No connections opened. Pure metadata indexing from existing queries.
+
+#### Local Hash Propagation
+
+When completing any FLAC download:
+
+```
+local_hash = parse_streaminfo_md5(downloaded_file)
+
+for entry in flac_inventory where size == file.size:
+    if verify_match(entry, downloaded_file):  # Optional: fingerprint check
+        entry.hash_status = "known"
+        entry.hash_value = local_hash
+        entry.source = "local_scan"
+```
+
+This alone fills a significant portion of the inventory without any probing.
+
+---
+
+### Phase 3: DHT Hash Lookup
+
+Query the distributed network before resorting to header sniffing.
+
+#### Content Key Format
+
+```
+flac_key = sha1(normalize(filename) + ":" + str(filesize))
+```
+
+Normalization: lowercase, strip path, remove common prefixes/suffixes.
+
+#### Lookup Flow
+
+For any `hash_status == "none"` entry from a non-DHT peer:
+
+```
+result = dht_lookup(flac_key)
+
+if result.found:
+    entry.hash_status = "known"
+    entry.hash_value = result.flac_md5
+    entry.source = "peer_dht"
+    return
+
+# Entry remains eligible for backfill
+```
+
+#### DHT Node Behavior
+
+Each `slskdn` node:
+- Joins overlay network on startup
+- Stores `flac_key → { md5, duration?, flags }` for known hashes
+- Responds to queries for keys in its partition
+- Publishes new hashes when discovered locally
+
+Popular releases converge within hours as multiple nodes download and share hashes.
+
+---
+
+### Phase 4: Backfill Scheduler
+
+Last resort: controlled header probing for long-tail content.
+
+#### Hard Constraints
+
+- `MAX_GLOBAL_CONNECTIONS = 1-2`: Never more than 2 simultaneous probes
+- `MAX_PER_PEER_PER_DAY = 10`: No peer hit more than 10 times daily
+- `MAX_HEADER_BYTES = 64KB`: Stop reading immediately after STREAMINFO
+- `MIN_IDLE_TIME = 5min`: Only run when no active transfers
+- `RUN_INTERVAL = 10min`: Scheduler wakes every 10 minutes
+
+#### Selection Algorithm
+
+```
+if active_backfills >= MAX_GLOBAL_CONNECTIONS:
+    return
+
+candidates = SELECT FROM flac_inventory
+    WHERE hash_status = "none"
+    AND peer_caps[peer_id].supports_dht = false
+    AND backfills_today[peer_id] < MAX_PER_PEER_PER_DAY
+    ORDER BY discovered_at ASC
+    LIMIT 3
+
+for candidate in candidates:
+    if eligible(candidate):
+        schedule_backfill(candidate)
+        break
+```
+
+#### Eligibility Rules
+
+- Skip if peer has active upload queue (don't compete with real users)
+- Prefer peers already in download history (less likely to complain)
+- Randomize selection to avoid hammering same users
+
+#### Backfill Operation
+
+```
+backfill_header(peer_id, path, file_id):
+    set hash_status = "pending"
+    
+    # Queue as lowest priority
+    send QueueUploadRequest(
+        peer_id, 
+        path, 
+        reason="slskdn:hdr_probe"  # Recognized by other slskdn nodes
+    )
+    
+    await transfer_accepted OR timeout(30s)
+    
+    if timeout:
+        set hash_status = "failed"
+        return
+    
+    buffer = read_bytes(MAX_HEADER_BYTES)
+    close_connection()
+    
+    md5 = parse_flac_streaminfo(buffer)
+    
+    if md5:
+        set hash_status = "known"
+        set hash_value = md5
+        set source = "backfill_sniff"
+        increment backfills_today[peer_id]
+        
+        # Publish to DHT
+        dht_publish(flac_key, md5)
+    else:
+        set hash_status = "failed"
+```
+
+---
+
+### Complete Resolution Pipeline
+
+For any FLAC file from any peer:
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│ 1. DISCOVERY                                                │
+│    - Detect peer capabilities                               │
+│    - Index FLAC metadata into inventory (hash_status=none)  │
+└─────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────┐
+│ 2. HASH RESOLUTION (in priority order)                      │
+│                                                             │
+│    a) Local download completed? → Compute hash → "known"    │
+│                                                             │
+│    b) DHT lookup returns result? → "known" (source=dht)     │
+│                                                             │
+│    c) Remains "none" → Eligible for backfill                │
+└─────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────┐
+│ 3. BACKFILL (last resort, strict rate limits)               │
+│    - Only for non-DHT peers                                 │
+│    - Max 10/day per peer                                    │
+│    - Max 1-2 concurrent globally                            │
+│    - 64KB read, immediate disconnect                        │
+│    - Publish result to DHT on success                       │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Convergence Behavior
+
+- **Popular content**: Hashes known within hours (many nodes download → DHT fills quickly)
+- **Medium popularity**: Days to weeks (fewer downloads, but eventually someone gets it)
+- **Long tail**: Months (backfill slowly colors in at sustainable rate)
+
+The key insight: DHT eliminates redundant work. Once *any* `slskdn` node downloads a file, *all* nodes benefit.
+
+---
+
+## Epidemic Mesh Sync Protocol
+
+An alternative to traditional Kademlia-style DHT: **gossip-based eventual consistency** where every extended client participates symmetrically, exchanging hash databases opportunistically during normal Soulseek interactions.
+
+### Design Rationale
+
+Traditional DHT requires:
+- Dedicated routing logic
+- Always-on supernodes or bootstrap servers
+- Explicit "this key lives on these nodes" plumbing
+
+Epidemic mesh requires:
+- Every client stores the same data structure
+- Pairwise sync when clients interact naturally
+- Eventual convergence via random/opportunistic connections
+
+The "DHT-ness" is in the **content** (hash-indexed keyspace), not the topology. The topology is simply "gossip with bounds."
+
+### Local State Per Client
+
+#### FLAC Hash Database
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `key` | TEXT PK | `sha1(flac_md5 + size)` or similar stable identifier |
+| `flac_md5` | BLOB | 16-byte FLAC STREAMINFO MD5 |
+| `size` | INTEGER | File size in bytes |
+| `meta_flags` | INTEGER | Optional: sample rate, channels, bit depth |
+| `first_seen_at` | INTEGER | Unix timestamp |
+| `last_updated_at` | INTEGER | Unix timestamp |
+
+#### Peer Sync State
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `peer_id` | TEXT PK | Soulseek username |
+| `caps` | INTEGER | Bitfield: `supports_mesh_sync`, etc. |
+| `last_sync_time` | INTEGER | Unix timestamp of last mesh sync |
+| `last_seq_seen` | INTEGER | Highest sequence ID received from this peer |
+
+#### Sync Parameters
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `MESH_SYNC_INTERVAL_MIN` | 1800s | Minimum seconds between syncs with same peer |
+| `MESH_MAX_ENTRIES_PER_SYNC` | 1000 | Maximum entries exchanged per session |
+| `MESH_MAX_PEERS_PER_CYCLE` | 5 | Maximum peers to sync with per time window |
+
+### Sequence-Based Delta Sync
+
+Each client maintains a **monotonic sequence counter** for local hash insertions:
+
+```
+LocalSeqEntry {
+    seq_id        // uint64, monotonically increasing
+    flac_key      // hash key
+    flac_md5      // the actual hash value
+    size          // file size
+    meta_flags    // optional metadata
+}
+```
+
+On each new hash acquisition (download, backfill, or mesh receive):
+
+```
+seq_counter += 1
+insert FlacEntry(...)
+insert LocalSeqEntry(seq_id=seq_counter, ...)
+```
+
+Sync becomes "give me everything since seq X" rather than full database comparison.
+
+### Wire Protocol
+
+Four message types over side-channel (phantom file transfer, dedicated TCP, or custom peer message):
+
+#### `MESH_HELLO`
+
+```json
+{
+    "type": "MESH_HELLO",
+    "client_id": "username",
+    "proto_version": 1,
+    "latest_seq_id": 847291
+}
+```
+
+Initiates session. Receiver updates `PeerState[sender].last_seq_seen_from_them`.
+
+#### `MESH_REQ_DELTA`
+
+```json
+{
+    "type": "MESH_REQ_DELTA",
+    "since_seq_id": 840000,
+    "max_entries": 1000
+}
+```
+
+Request entries newer than specified sequence.
+
+#### `MESH_PUSH_DELTA`
+
+```json
+{
+    "type": "MESH_PUSH_DELTA",
+    "entries": [
+        {"seq_id": 840001, "key": "abc123...", "flac_md5": "def456...", "size": 43586375},
+        {"seq_id": 840002, "key": "xyz789...", "flac_md5": "uvw012...", "size": 31063330}
+    ]
+}
+```
+
+Response with requested entries. Receiver upserts and updates `last_seq_seen`.
+
+#### `MESH_REQ_KEY` (Optional)
+
+```json
+{
+    "type": "MESH_REQ_KEY",
+    "flac_key": "abc123..."
+}
+```
+
+Explicit lookup for a specific key. Response is single entry or null.
+
+### Sync Flow
+
+When client A connects to mesh-capable client B (during search, upload, chat, etc.):
+
+```
+A → B: MESH_HELLO { latest_seq_id: 50000 }
+B → A: MESH_HELLO { latest_seq_id: 47000 }
+
+// B wants A's newer entries
+B → A: MESH_REQ_DELTA { since_seq_id: 47000, max_entries: 1000 }
+A → B: MESH_PUSH_DELTA { entries: [...3000 entries...] }
+
+// A wants B's entries (if any)
+A → B: MESH_REQ_DELTA { since_seq_id: 45000, max_entries: 1000 }
+B → A: MESH_PUSH_DELTA { entries: [...2000 entries...] }
+
+// Session complete, both updated
+```
+
+### Bounding Propagation Cost
+
+Per-sync limits prevent flooding:
+
+- `max_entries` caps each direction (e.g., 1000)
+- `MESH_SYNC_INTERVAL_MIN` prevents repeated syncs with same peer
+- Large databases converge over multiple sessions, not single transfers
+
+Example: 50k entries, 1k per sync = 50 sessions for full alignment. In practice, popular keys propagate rapidly; obscure keys trickle slowly.
+
+### Small-World Neighbor Optimization
+
+Optional enhancement for faster propagation:
+
+1. Each client maintains N semi-sticky "neighbor" peers (random mesh-capable users)
+2. Sync more frequently with neighbors
+3. Sync opportunistically with random encounters
+
+Creates a small-world graph where:
+- New entries propagate quickly via neighbor edges
+- Random connections prevent network fragmentation
+- No single point of failure
+
+### Integration with Backfill Strategy
+
+Hash resolution order:
+
+1. **Local DB**: Instant lookup
+2. **Mesh query**: Send `MESH_REQ_KEY` to N neighbors
+3. **Header backfill**: Last resort, only for non-mesh peers, under strict rate limits
+
+New hashes flow into mesh automatically:
+- Acquire hash (download, backfill, mesh sync)
+- Insert with new `seq_id`
+- Propagate via future sync sessions
+
+### Convergence Properties
+
+| Content Type | Convergence Time | Mechanism |
+|--------------|------------------|-----------|
+| Popular releases | Hours | Many downloads → many sources → rapid mesh spread |
+| Medium popularity | Days-weeks | Fewer initial sources, but mesh eventually propagates |
+| Long tail | Weeks-months | Backfill discovers, mesh distributes |
+
+No dedicated infrastructure required. Every client contributes equally to network knowledge.
+
+---
+
 ## Source Info
 
 1. https://github.com/nicotine-plus/nicotine-plus/blob/master/doc/SLSKPROTOCOL.md

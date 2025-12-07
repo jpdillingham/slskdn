@@ -183,6 +183,38 @@ namespace slskd.Transfers.MultiSource.Discovery.API
                 summaries,
             });
         }
+
+        /// <summary>
+        ///     Gets the count of users flagged as not supporting partial downloads.
+        /// </summary>
+        /// <returns>Count of flagged users.</returns>
+        [HttpGet("no-partial-count")]
+        [Authorize(Policy = AuthPolicy.Any)]
+        public IActionResult GetNoPartialCount()
+        {
+            var count = Discovery.GetNoPartialSupportCount();
+            return Ok(new
+            {
+                usersWithoutPartialSupport = count,
+                message = $"{count} users are flagged as not supporting partial/chunked downloads",
+            });
+        }
+
+        /// <summary>
+        ///     Resets all partial support flags (gives everyone another chance).
+        /// </summary>
+        /// <returns>Confirmation.</returns>
+        [HttpPost("reset-partial-flags")]
+        [Authorize(Policy = AuthPolicy.Any)]
+        public IActionResult ResetPartialFlags()
+        {
+            var beforeCount = Discovery.GetNoPartialSupportCount();
+            Discovery.ResetPartialSupportFlags();
+            return Ok(new
+            {
+                message = $"Reset partial support flags for {beforeCount} users. They will be tried again on next swarm.",
+            });
+        }
     }
 
     /// <summary>

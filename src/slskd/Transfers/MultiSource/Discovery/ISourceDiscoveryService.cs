@@ -78,6 +78,17 @@ namespace slskd.Transfers.MultiSource.Discovery
         /// <param name="minSources">Minimum number of sources to include.</param>
         /// <returns>List of file size summaries.</returns>
         List<FileSizeSummary> GetFileSizeSummaries(int minSources = 2);
+
+        /// <summary>
+        ///     Gets the count of users flagged as not supporting partial downloads.
+        /// </summary>
+        /// <returns>Number of flagged users.</returns>
+        int GetNoPartialSupportCount();
+
+        /// <summary>
+        ///     Resets all partial support flags.
+        /// </summary>
+        void ResetPartialSupportFlags();
     }
 
     /// <summary>

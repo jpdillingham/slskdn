@@ -286,6 +286,32 @@ namespace slskd.Transfers.MultiSource.Discovery
             return results;
         }
 
+        /// <inheritdoc/>
+        public int GetNoPartialSupportCount()
+        {
+            using var connection = new SqliteConnection($"Data Source={dbPath}");
+            connection.Open();
+
+            using var cmd = connection.CreateCommand();
+            cmd.CommandText = "SELECT COUNT(*) FROM DiscoveredFiles WHERE SupportsPartial = 0";
+
+            var result = cmd.ExecuteScalar();
+            return Convert.ToInt32(result ?? 0);
+        }
+
+        /// <inheritdoc/>
+        public void ResetPartialSupportFlags()
+        {
+            using var connection = new SqliteConnection($"Data Source={dbPath}");
+            connection.Open();
+
+            using var cmd = connection.CreateCommand();
+            cmd.CommandText = "UPDATE DiscoveredFiles SET SupportsPartial = 1 WHERE SupportsPartial = 0";
+            var affected = cmd.ExecuteNonQuery();
+
+            log.Information("[Discovery] Reset partial support flags for {Count} entries", affected);
+        }
+
         private void InitializeDatabase()
         {
             using var connection = new SqliteConnection($"Data Source={dbPath}");

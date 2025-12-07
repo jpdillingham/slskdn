@@ -1,5 +1,13 @@
 # slskdn - The Rich-Featured Soulseek Client
 
+⚡ Positioning Statement for slskdn Enhancements
+
+slskdn is a forward-leaning Soulseek client that remains firmly grounded in the spirit and structure of the original network. We believe in preserving Soulseek’s unique one-to-one sharing culture, human-scale interaction, and community-driven ethos — while offering opt-in tools for those who want more speed, flexibility, or experimentation.
+
+Our approach to both application and protocol extension is additive, not disruptive. We aim to enhance Soulseek with optional features like multipart downloads, improved reliability, and smarter client coordination, without breaking compatibility with existing clients or infringing on the core protocol. Where possible, we will reuse existing behaviors and extend them gracefully so that legacy clients continue to operate unchanged, and enhanced clients can interoperate seamlessly.
+
+In short: we're not replacing Soulseek, we're extending its possibilities for those who want to go further. Our enhancements are community-first, protocol-respecting, and always mindful of the fragile beauty of the network we've all grown to love.
+
 ## Why Fork?
 
 **slskd** is an excellent headless Soulseek client with a clean API. However, the maintainer has a clear philosophy: keep the core lean and let users implement advanced features via external scripts and the API.

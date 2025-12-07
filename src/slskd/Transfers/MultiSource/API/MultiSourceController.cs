@@ -621,12 +621,50 @@ namespace slskd.Transfers.MultiSource.API
                 return BadRequest($"Not enough sources ({allSources.Count}). Need at least 2.");
             }
 
-            var verifiedSources = allSources.Select(s => new VerifiedSource
+            List<VerifiedSource> verifiedSources;
+            string expectedHash = null;
+
+            if (request.SkipVerification)
             {
-                Username = s.Username,
-                FullPath = s.FullPath,
-                Method = VerificationMethod.None,
-            }).ToList();
+                // NO VERIFICATION - just use all sources (risky for multi-source!)
+                verifiedSources = allSources.Select(s => new VerifiedSource
+                {
+                    Username = s.Username,
+                    FullPath = s.FullPath,
+                    Method = VerificationMethod.None,
+                }).ToList();
+            }
+            else
+            {
+                // VERIFY sources by FLAC MD5 - critical for multi-source integrity!
+                Log.Information("[SWARM ASYNC] Verifying {Count} sources by FLAC hash...", allSources.Count);
+
+                var verificationResult = await ContentVerification.VerifySourcesAsync(
+                    new ContentVerificationRequest
+                    {
+                        Filename = allSources.First().FullPath,
+                        FileSize = request.Size,
+                        CandidateUsernames = allSources.Select(s => s.Username).ToList(),
+                        TimeoutMs = 30000,
+                    },
+                    HttpContext.RequestAborted);
+
+                if (verificationResult.BestSources.Count < 2)
+                {
+                    return BadRequest(new
+                    {
+                        error = $"Not enough verified sources ({verificationResult.BestSources.Count}). Need at least 2 with matching FLAC hash.",
+                        hashGroups = verificationResult.SourcesByHash.Count,
+                        failedSources = verificationResult.FailedSources.Count,
+                    });
+                }
+
+                verifiedSources = verificationResult.BestSources;
+                expectedHash = verificationResult.BestHash;
+
+                Log.Information("[SWARM ASYNC] Verified {Count} sources with matching hash {Hash}",
+                    verifiedSources.Count, expectedHash?.Substring(0, 16) + "...");
+            }
 
             var targetFilename = IOPath.GetFileName(verifiedSources.First().FullPath);
             var outputPath = IOPath.Combine(IOPath.GetTempPath(), "slskdn-swarm", $"{DateTime.UtcNow:yyyyMMdd_HHmmss}_{targetFilename}");
@@ -635,6 +673,7 @@ namespace slskd.Transfers.MultiSource.API
             {
                 Filename = verifiedSources.First().FullPath,
                 FileSize = request.Size,
+                ExpectedHash = expectedHash,
                 OutputPath = outputPath,
                 Sources = verifiedSources,
                 ChunkSize = request.ChunkSize,
@@ -661,8 +700,11 @@ namespace slskd.Transfers.MultiSource.API
             {
                 jobId = downloadRequest.Id,
                 message = "Swarm download started in background. Poll /api/v0/multisource/jobs/{jobId} for status.",
-                totalSources = allSources.Count,
+                totalSources = verifiedSources.Count,
+                verifiedSources = verifiedSources.Count,
                 totalChunks = (int)Math.Ceiling((double)request.Size / request.ChunkSize),
+                verificationEnabled = !request.SkipVerification,
+                expectedHash = expectedHash?.Substring(0, 16) + "...",
             });
         }
 

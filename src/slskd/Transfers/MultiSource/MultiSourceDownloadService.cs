@@ -42,7 +42,7 @@ namespace slskd.Transfers.MultiSource
         /// <summary>
         ///     Default chunk size for parallel downloads (1MB).
         /// </summary>
-        public const int DefaultChunkSize = 1024 * 1024;
+        public const int DefaultChunkSize = 512 * 1024;  // 512KB - balance between overhead amortization and failure recovery
 
         /// <summary>
         ///     Initializes a new instance of the <see cref="MultiSourceDownloadService"/> class.
@@ -235,11 +235,12 @@ namespace slskd.Transfers.MultiSource
                 var failedCount = chunks.Count - completedChunks.Count;
                 Log.Information("[SWARM] First pass: {Completed}/{Total} chunks", completedChunks.Count, chunks.Count);
 
-                // If chunks remain, retry with workers that SUCCEEDED
+                // If chunks remain, keep retrying until complete or truly stuck
                 var retryAttempt = 0;
-                const int maxRetries = 5;
+                var stuckCount = 0;  // Track consecutive retries with no progress
+                const int maxStuckRetries = 3;  // Give up after 3 retries with ZERO progress
 
-                while (failedCount > 0 && retryAttempt < maxRetries)
+                while (failedCount > 0 && stuckCount < maxStuckRetries)
                 {
                     retryAttempt++;
                     var successfulSources = sourceStats
@@ -277,8 +278,8 @@ namespace slskd.Transfers.MultiSource
                         break;
                     }
 
-                    Log.Information("[SWARM] Retry {Attempt}/{Max}: {Missing} chunks remaining, using {Sources} sources",
-                        retryAttempt, maxRetries, failedCount, successfulSources.Count);
+                    Log.Information("[SWARM] Retry {Attempt}: {Missing} chunks remaining, using {Sources} sources (stuck={Stuck}/{MaxStuck})",
+                        retryAttempt, failedCount, successfulSources.Count, stuckCount, maxStuckRetries);
 
                     // Re-enqueue missing chunks
                     foreach (var chunk in chunks)
@@ -320,9 +321,23 @@ namespace slskd.Transfers.MultiSource
                     }
 
                     await Task.WhenAll(retryTasks);
-                    failedCount = chunks.Count - completedChunks.Count;
-                    Log.Information("[SWARM] After retry {Attempt}: {Completed}/{Total} chunks",
-                        retryAttempt, completedChunks.Count, chunks.Count);
+                    var newFailedCount = chunks.Count - completedChunks.Count;
+                    
+                    // Track progress - if no chunks completed this round, we're stuck
+                    if (newFailedCount >= failedCount)
+                    {
+                        stuckCount++;
+                        Log.Warning("[SWARM] Retry {Attempt} made NO progress ({Stuck}/{MaxStuck} stuck rounds)",
+                            retryAttempt, stuckCount, maxStuckRetries);
+                    }
+                    else
+                    {
+                        stuckCount = 0;  // Reset - we made progress!
+                        Log.Information("[SWARM] After retry {Attempt}: {Completed}/{Total} chunks (+{Progress})",
+                            retryAttempt, completedChunks.Count, chunks.Count, failedCount - newFailedCount);
+                    }
+                    
+                    failedCount = newFailedCount;
                 }
 
                 result.Chunks = completedChunks.Values.ToList();
@@ -330,7 +345,7 @@ namespace slskd.Transfers.MultiSource
 
                 if (failedCount > 0)
                 {
-                    result.Error = $"{failedCount} chunks failed after {retryAttempt} retries";
+                    result.Error = $"{failedCount} chunks failed after {retryAttempt} retries ({stuckCount} stuck rounds)";
                     result.Success = false;
                     status.State = MultiSourceDownloadState.Failed;
 
@@ -486,14 +501,17 @@ namespace slskd.Transfers.MultiSource
                         continue;
                     }
 
+                    // Use unique temp file per worker to avoid race conditions
+                    // Then atomically move to final path only if we're first to complete
+                    var workerTempPath = IOPath.Combine(tempDir, $"chunk_{chunk.Index:D4}_{username.GetHashCode():X8}.tmp");
                     var chunkPath = IOPath.Combine(tempDir, $"chunk_{chunk.Index:D4}.bin");
 
                     try
                     {
-                        // AGGRESSIVE timeout - 15s max per chunk to prevent stragglers
-                        // Fast peers do 128KB chunks in 1-3 seconds; 15s is plenty
+                        // AGGRESSIVE timeout - 10s max per chunk to prevent stragglers
+                        // Fast peers do 256KB chunks in 1-5 seconds; 10s is plenty
                         using var chunkCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-                        chunkCts.CancelAfter(15000); // 15s max per chunk
+                        chunkCts.CancelAfter(10000); // 10s max per chunk
 
                         var result = await DownloadChunkAsync(
                             username,
@@ -501,13 +519,32 @@ namespace slskd.Transfers.MultiSource
                             fileSize,
                             chunk.StartOffset,
                             chunk.EndOffset,
-                            chunkPath,
+                            workerTempPath,  // Write to worker-specific temp file
                             status,
                             chunkCts.Token);
 
                         if (result.Success)
                         {
-                            completedChunks[chunk.Index] = result;
+                            // Atomic: Only move to final path if we're first to complete this chunk
+                            // TryAdd returns false if another worker already completed it
+                            if (completedChunks.TryAdd(chunk.Index, result))
+                            {
+                                // We won the race - move our file to final path
+                                if (System.IO.File.Exists(workerTempPath))
+                                {
+                                    System.IO.File.Move(workerTempPath, chunkPath, overwrite: true);
+                                }
+                            }
+                            else
+                            {
+                                // Another worker won - delete our temp file
+                                if (System.IO.File.Exists(workerTempPath))
+                                {
+                                    System.IO.File.Delete(workerTempPath);
+                                }
+                                Log.Debug("[SWARM] {Username} completed chunk {Index} but another worker won the race", username, chunk.Index);
+                                continue;
+                            }
                             sourceStats.AddOrUpdate(username, 1, (_, count) => count + 1);
                             consecutiveFailures = 0; // Reset on success
 
@@ -663,8 +700,8 @@ namespace slskd.Transfers.MultiSource
         {
             const int absoluteMinSpeedBps = 5 * 1024;  // 5 KB/s absolute floor
             const double minSpeedPercent = 0.15;       // 15% of best speed
-            const int slowDurationMs = 10000;          // 10 seconds of slow = too slow
-            const int peerTimeoutSeconds = 30;         // Timeout duration for slow peers
+            const int slowDurationMs = 8000;           // 8 seconds of slow = too slow (512KB chunks)
+            const int peerTimeoutSeconds = 20;         // Timeout duration for slow peers
 
             var result = new ChunkResult
             {
@@ -694,6 +731,10 @@ namespace slskd.Transfers.MultiSource
                 using var fileStream = new FileStream(outputPath, FileMode.Create, FileAccess.Write);
                 var limitedStream = new LimitedWriteStream(fileStream, chunkSize, cts);
 
+                // Timing metrics
+                var firstByteTime = (long?)null;  // Time to first byte (connection overhead)
+                var transferStartTime = (long?)null;  // When actual transfer started
+                
                 // Speed monitor - cancel if too slow for too long
                 var slowSince = (DateTime?)null;
                 var lastBytes = 0L;
@@ -710,6 +751,13 @@ namespace slskd.Transfers.MultiSource
                         var bytesInInterval = currentBytes - lastBytes;
                         var speedBps = bytesInInterval / 2; // 2 second interval (approx)
                         lastBytes = currentBytes;
+
+                        // Track time to first byte
+                        if (currentBytes > 0 && firstByteTime == null)
+                        {
+                            firstByteTime = stopwatch.ElapsedMilliseconds;
+                            transferStartTime = stopwatch.ElapsedMilliseconds;
+                        }
 
                         // Update best speed if this is faster
                         if (speedBps > 0)
@@ -806,8 +854,14 @@ namespace slskd.Transfers.MultiSource
                 }
 
                 stopwatch.Stop();
+                var totalMs = stopwatch.ElapsedMilliseconds;
+                var ttfb = firstByteTime ?? totalMs;  // If no bytes, ttfb = total time
+                var transferMs = transferStartTime.HasValue ? (totalMs - transferStartTime.Value) : 0;
+                
                 result.BytesDownloaded = limitedStream.BytesWritten;
-                result.TimeMs = stopwatch.ElapsedMilliseconds;
+                result.TimeMs = totalMs;
+                result.TimeToFirstByteMs = ttfb;
+                result.TransferTimeMs = transferMs;
                 result.Success = limitedStream.BytesWritten >= chunkSize;
 
                 if (result.Success)
@@ -815,12 +869,17 @@ namespace slskd.Transfers.MultiSource
                     status.AddBytesDownloaded(chunkSize);
                     status.IncrementCompletedChunks();
 
-                    Log.Debug(
-                        "Chunk complete from {Username}: {Size} bytes in {Time}ms ({Speed:F2} KB/s)",
+                    // Detailed timing log
+                    Log.Information(
+                        "[CHUNK] {Username}: {Size}KB in {Total}ms | TTFB:{TTFB}ms Transfer:{Transfer}ms | Overhead:{Overhead:F0}% | Speed:{Speed:F0}KB/s (raw:{RawSpeed:F0}KB/s)",
                         username,
-                        chunkSize,
-                        result.TimeMs,
-                        result.SpeedBps / 1024.0);
+                        chunkSize / 1024,
+                        totalMs,
+                        ttfb,
+                        transferMs,
+                        result.OverheadPercent,
+                        result.SpeedBps / 1024.0,
+                        result.TransferSpeedBps / 1024.0);
                 }
                 else
                 {

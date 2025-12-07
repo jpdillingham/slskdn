@@ -102,7 +102,7 @@ namespace slskd.Transfers.MultiSource
         /// <summary>
         ///     Gets or sets the chunk size in bytes. Default is 1MB.
         /// </summary>
-        public long ChunkSize { get; set; } = 1024 * 1024;
+        public long ChunkSize { get; set; } = 512 * 1024;  // 512KB default
     }
 
     /// <summary>
@@ -187,9 +187,24 @@ namespace slskd.Transfers.MultiSource
         public long BytesDownloaded { get; set; }
 
         /// <summary>
-        ///     Gets or sets the time taken in milliseconds.
+        ///     Gets or sets the total time taken in milliseconds (start to finish).
         /// </summary>
         public long TimeMs { get; set; }
+
+        /// <summary>
+        ///     Gets or sets time to first byte in milliseconds (connection + handshake overhead).
+        /// </summary>
+        public long TimeToFirstByteMs { get; set; }
+
+        /// <summary>
+        ///     Gets or sets actual transfer time in milliseconds (first byte to last byte).
+        /// </summary>
+        public long TransferTimeMs { get; set; }
+
+        /// <summary>
+        ///     Gets the overhead percentage (non-transfer time / total time).
+        /// </summary>
+        public double OverheadPercent => TimeMs > 0 ? ((TimeMs - TransferTimeMs) * 100.0) / TimeMs : 0;
 
         /// <summary>
         ///     Gets or sets a value indicating whether the chunk succeeded.
@@ -202,9 +217,14 @@ namespace slskd.Transfers.MultiSource
         public string Error { get; set; }
 
         /// <summary>
-        ///     Gets the average speed in bytes per second.
+        ///     Gets the average speed in bytes per second (total time).
         /// </summary>
         public double SpeedBps => TimeMs > 0 ? (BytesDownloaded * 1000.0) / TimeMs : 0;
+
+        /// <summary>
+        ///     Gets the transfer speed in bytes per second (transfer time only, excludes overhead).
+        /// </summary>
+        public double TransferSpeedBps => TransferTimeMs > 0 ? (BytesDownloaded * 1000.0) / TransferTimeMs : 0;
     }
 
     /// <summary>

@@ -1177,7 +1177,7 @@ namespace slskd.Transfers.MultiSource.API
         public string ExpectedHash { get; set; }
 
         /// <summary>Gets or sets the chunk size in bytes (default 256KB).</summary>
-        public long ChunkSize { get; set; } = 128 * 1024;
+        public long ChunkSize { get; set; } = 512 * 1024;  // 512KB default
 
         /// <summary>Gets or sets the verified sources.</summary>
         public List<SourceRequest> Sources { get; set; }
@@ -1294,7 +1294,7 @@ namespace slskd.Transfers.MultiSource.API
         public long Size { get; set; }
 
         /// <summary>Gets or sets the chunk size (default 128KB).</summary>
-        public int ChunkSize { get; set; } = 128 * 1024;
+        public int ChunkSize { get; set; } = 512 * 1024;  // 512KB default
 
         /// <summary>Gets or sets the search timeout in ms (default 30s). Only used if not using discovery DB.</summary>
         public int SearchTimeout { get; set; } = 30000;

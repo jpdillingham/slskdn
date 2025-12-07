@@ -96,27 +96,56 @@ Recommended settings:
 - Minimum sources: 3+ for meaningful benefit
 - Speed threshold: 5 KB/s minimum, 15s tolerance
 
-## Known Issues / TODO
+## Validated Improvements (Dec 2025)
 
-1. **Slow peer replacement**: Currently slow peers are cycled out but idle proven peers don't automatically take over their work
-2. **No dynamic source discovery**: Pool is built once at start; new sources aren't discovered mid-download
-3. **Chunk verification**: Currently relies on size matching; could add hash verification for integrity
-4. **Progress reporting**: Live progress could be improved for frontend integration
+After extensive testing, the following improvements have stabilized the swarm behavior:
 
-## Sample Results
+1.  **Chunk Size Increase**: Default increased to **1MB** (1024KB).
+    *   Result: Significantly reduced connection overhead and faster completion.
+2.  **Hard Timeout**: Added 45s hard timeout per chunk download.
+    *   Result: Prevents "hanging" workers (stuck in connection phase) from blocking chunks indefinitely.
+3.  **Blacklisting**: Failed peers (especially those returning "Remote Client Failed") are blacklisted for the session.
+    *   Result: Prevents infinite retry loops on bad peers.
+4.  **Desperation Retry**: If all "proven" sources fail, the blacklist is purged and **ALL** original sources are retried.
+    *   Result: Prevents stalling when the only "proven" source disconnects or slows down.
+5.  **Smart Slow Peer Pruning**:
+    *   Workers < 5 KB/s for 15s are cancelled/re-queued **ONLY IF** other workers are available (`ActiveWorkers > 1`).
+    *   If it's the *last* worker, it is kept alive (better than failing).
+    *   Speed failures are treated as "soft" (don't count towards the 3-strike kill limit).
 
-Typical successful swarm download:
+### Successful Test Run (1MB Chunks)
+
 ```
-[SWARM] ✓ user1 chunk 0 @ 2847 KB/s [1/197]
-[SWARM] ✓ user2 chunk 1 @ 1523 KB/s [2/197]
-[SWARM] ✓ user1 chunk 5 @ 3012 KB/s [3/197]
+[SWARM] Starting with 16 sources, 1024KB chunks
+...
+[SWARM] ✓ julesss chunk 12 @ 91 KB/s
+[SWARM] ✓ brunzmeflugen chunk 2 @ 92 KB/s
+[SWARM] ✗ katharsis chunk 7: User katharsis appears to be offline (fail 1/3)
+...
+[SWARM] ✓ YVR chunk 0 @ 125 KB/s
 ...
 [SWARM] SUCCESS! Chunk distribution:
-  user1: 87 chunks
-  user2: 54 chunks
-  user3: 32 chunks
-  user4: 24 chunks
+   YVR: 3 chunks
+   bstroszek: 3 chunks
+   julesss: 3 chunks
+   trianine: 3 chunks
+   Antarctiica: 2 chunks
+   dankmolot: 2 chunks
+   officejapan: 2 chunks
+   Pez: 1 chunks
+   brunzmeflugen: 1 chunks
+   red_book: 1 chunks
+
+✅ SUCCESS!
+   Sources used: 10
+   Time: 81709ms
+   Output: /tmp/slskdn-test/...Within.flac
+   ✅ FLAC verification PASSED
 ```
 
-Fast peers naturally complete more chunks due to the shared queue design.
+## Known Issues / TODO
+
+1.  **No dynamic source discovery**: Pool is built once at start; new sources aren't discovered mid-download (Search could be re-run).
+2.  **Progress reporting**: Live progress could be improved for frontend integration.
+
 

@@ -203,6 +203,7 @@ namespace slskd.Transfers.MultiSource
 
                 var completedChunks = new ConcurrentDictionary<int, ChunkResult>();
                 var sourceStats = new ConcurrentDictionary<string, int>(); // username -> chunks completed
+                var failedUsers = new ConcurrentDictionary<string, bool>(); // username -> failed hard
 
                 // Spawn worker for EACH source - they all grab from the shared queue
                 var workerTasks = new List<Task>();
@@ -218,6 +219,7 @@ namespace slskd.Transfers.MultiSource
                             chunkQueue,
                             completedChunks,
                             sourceStats,
+                            failedUsers,
                             tempDir,
                             status,
                             cancellationToken);
@@ -238,14 +240,31 @@ namespace slskd.Transfers.MultiSource
                 while (failedCount > 0 && retryAttempt < maxRetries)
                 {
                     retryAttempt++;
-                    var successfulSources = sourceStats.Where(s => s.Value > 0).Select(s => s.Key).ToList();
+                    var successfulSources = sourceStats.Where(s => s.Value > 0 && !failedUsers.ContainsKey(s.Key))
+                        .Select(s => s.Key).ToList();
 
-                    // If we don't have enough proven sources, try everyone again (desperation mode)
+                    // If we don't have enough proven sources, try other candidates (excluding failed ones)
                     // This prevents stalling on a single peer
                     if (successfulSources.Count < 3)
                     {
-                        Log.Warning("[SWARM] Only {Count} proven sources. Retrying with ALL original sources.", successfulSources.Count);
-                        successfulSources = request.Sources.Select(s => s.Username).ToList();
+                        var candidates = request.Sources
+                            .Where(s => !failedUsers.ContainsKey(s.Username))
+                            .Select(s => s.Username)
+                            .ToList();
+
+                        if (candidates.Count > 0)
+                        {
+                            Log.Warning("[SWARM] Only {Count} proven sources. Retrying with {Candidates} candidates (excluding failed).", 
+                                successfulSources.Count, candidates.Count);
+                            successfulSources = candidates;
+                        }
+                        else 
+                        {
+                            // Desperation: Purge blacklist and retry everyone
+                            Log.Warning("[SWARM] All sources failed/blacklisted. Purging blacklist and retrying everyone.");
+                            failedUsers.Clear();
+                            successfulSources = request.Sources.Select(s => s.Username).ToList();
+                        }
                     }
 
                     if (successfulSources.Count == 0)
@@ -271,7 +290,7 @@ namespace slskd.Transfers.MultiSource
                         }
                     }
 
-                    // Spawn workers only for successful sources
+                    // Spawn workers only for selected sources
                     var retryTasks = new List<Task>();
                     foreach (var username in successfulSources)
                     {
@@ -287,6 +306,7 @@ namespace slskd.Transfers.MultiSource
                                     chunkQueue,
                                     completedChunks,
                                     sourceStats,
+                                    failedUsers,
                                     tempDir,
                                     status,
                                     cancellationToken);
@@ -482,6 +502,7 @@ namespace slskd.Transfers.MultiSource
                             if (consecutiveFailures >= maxConsecutiveFailures)
                             {
                                 Log.Warning("[SWARM] {Username} giving up after {Fails} consecutive failures", username, consecutiveFailures);
+                                failedUsers.TryAdd(username, true);
                                 break;
                             }
 
@@ -516,6 +537,7 @@ namespace slskd.Transfers.MultiSource
                         if (consecutiveFailures >= maxConsecutiveFailures)
                         {
                             Log.Warning("[SWARM] {Username} giving up after {Fails} consecutive failures", username, consecutiveFailures);
+                            failedUsers.TryAdd(username, true);
                             break;
                         }
 

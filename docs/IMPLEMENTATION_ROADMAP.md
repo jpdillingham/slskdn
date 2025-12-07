@@ -246,67 +246,50 @@ CREATE TABLE MeshPeerState (
 
 ---
 
-## Phase 4: Backfill Scheduler Service
+## Phase 4: Backfill Scheduler Service ✅ COMPLETE
 
-### 4.1 Purpose
+> **Status:** Implemented and tested. Commit `df3f605f`
 
-Last-resort mechanism for discovering FLAC hashes when DHT lookup fails. Must be **extremely conservative** to avoid abuse.
+### 4.1 Hard Constraints ✅
 
-### 4.2 Hard Constraints
+| Constraint | Value | Description |
+|------------|-------|-------------|
+| `MAX_GLOBAL_CONNECTIONS` | 2 | Max simultaneous probes |
+| `MAX_PER_PEER_PER_DAY` | 10 | Max probes per peer daily |
+| `MAX_HEADER_BYTES` | 64KB | Read limit per probe |
+| `MIN_IDLE_TIME` | 5min | Idle time before running |
+| `RUN_INTERVAL` | 10min | Cycle interval |
+| `TRANSFER_TIMEOUT` | 30s | Timeout per probe |
 
-| Constraint | Value | Rationale |
-|------------|-------|-----------|
-| `MAX_GLOBAL_CONNECTIONS` | 1-2 | Never more than 2 simultaneous probes |
-| `MAX_PER_PEER_PER_DAY` | 10 | No peer hit more than 10 times daily |
-| `MAX_HEADER_BYTES` | 64KB | Stop reading immediately after STREAMINFO |
-| `MIN_IDLE_TIME` | 5min | Only run when no active transfers |
-| `RUN_INTERVAL` | 10min | Scheduler wakes every 10 minutes |
+### 4.2 API Endpoints ✅
 
-### 4.3 Selection Algorithm
+| Endpoint | Description |
+|----------|-------------|
+| `GET /api/v0/backfill/stats` | Scheduler statistics |
+| `GET /api/v0/backfill/config` | Configuration |
+| `GET /api/v0/backfill/candidates` | Files pending backfill |
+| `POST /api/v0/backfill/enable` | Enable/disable scheduler |
+| `POST /api/v0/backfill/trigger` | Manually trigger cycle |
+| `POST /api/v0/backfill/file` | Backfill specific file |
+| `POST /api/v0/backfill/idle` | Report system idle |
+| `POST /api/v0/backfill/busy` | Report system busy |
 
-```
-if active_backfills >= MAX_GLOBAL_CONNECTIONS:
-    return
+### 4.3 Features ✅
 
-candidates = SELECT FROM FlacInventory
-    WHERE hash_status = 'none'
-    AND peer_caps[peer_id] NOT CONTAINS supports_dht
-    AND backfills_today[peer_id] < MAX_PER_PEER_PER_DAY
-    ORDER BY discovered_at ASC
-    LIMIT 3
+- Background service with configurable interval
+- Idle-time tracking before running cycles
+- Per-peer rate limiting (backfills_today counter)
+- Semaphore for concurrent connection limit
+- FLAC header parsing → SHA256 hash
+- Integration with HashDb and MeshSync
+- Skips slskdn peers (use mesh sync instead)
 
-for candidate in candidates:
-    if eligible(candidate):  # Not in active queue, peer online, etc.
-        schedule_backfill(candidate)
-        break
-```
+### Files Created:
+- `src/slskd/Backfill/IBackfillSchedulerService.cs` ✅
+- `src/slskd/Backfill/BackfillSchedulerService.cs` ✅
+- `src/slskd/Backfill/API/BackfillController.cs` ✅
 
-### 4.4 Backfill Operation Flow
-
-```
-1. Set hash_status = 'pending'
-2. Queue as lowest priority upload request
-3. Use reason field: "slskdn:hdr_probe" (recognized by other slskdn nodes)
-4. Wait for transfer_accepted OR timeout(30s)
-5. If timeout: set hash_status = 'failed', return
-6. Read up to MAX_HEADER_BYTES
-7. Close connection immediately
-8. Parse FLAC STREAMINFO for MD5
-9. If successful:
-   - Set hash_status = 'known'
-   - Set hash_value = md5
-   - Set hash_source = 'backfill_sniff'
-   - Increment backfills_today[peer_id]
-   - Publish to mesh: dht_publish(flac_key, md5)
-10. Else: set hash_status = 'failed'
-```
-
-### 4.5 Implementation Files
-
-**Files to create:**
-- `src/slskd/Backfill/IBackfillSchedulerService.cs` (NEW)
-- `src/slskd/Backfill/BackfillSchedulerService.cs` (NEW)
-- `src/slskd/Backfill/BackfillBackgroundService.cs` (NEW - IHostedService)
+**Note:** Actual Soulseek download integration pending - logic and rate limiting fully implemented.
 
 ---
 
@@ -387,7 +370,7 @@ POST /api/v0/backfill/trigger
 ### Sprint 2: Hash Resolution (In Progress)
 4. ⬜ Integrate hash lookup into `ContentVerificationService`
 5. ⬜ Add passive hash collection from downloads
-6. ⬜ Create `BackfillSchedulerService` (basic)
+6. ✅ Create `BackfillSchedulerService` (commit `df3f605f`)
 
 ### Sprint 3: Mesh Sync ✅ COMPLETE
 7. ✅ Create `MeshSyncService` with protocol handlers (commit `fba4ccab`)

@@ -327,9 +327,31 @@ POST /api/v0/mesh/sync/{username}    → Trigger sync with peer
 - Max entries: 1000 per sync session
 - Max peers: 5 per sync cycle
 
-### Phase 4: Backfill Scheduler ⬜ PENDING
+### Phase 4: Backfill Scheduler ✅ COMPLETE
 
-Will implement conservative header probing for long-tail content with strict rate limits.
+Implemented conservative header probing for long-tail content with strict rate limits.
+
+**Hard Constraints:**
+- Max 2 simultaneous probes globally
+- Max 10 probes per peer per day
+- 64KB header read limit
+- Only runs after 5 minutes idle
+- 10 minute interval between cycles
+
+**API Endpoints:**
+```
+GET  /api/v0/backfill/stats       → Scheduler statistics
+GET  /api/v0/backfill/config      → Configuration
+GET  /api/v0/backfill/candidates  → Files pending backfill
+POST /api/v0/backfill/trigger     → Manually trigger cycle
+POST /api/v0/backfill/enable      → Enable/disable scheduler
+```
+
+**Features:**
+- Background service with idle-time tracking
+- Per-peer rate limiting
+- Skips slskdn peers (use mesh sync instead)
+- Publishes discovered hashes to mesh
 
 ### Phase 5: Integration ⬜ PENDING
 

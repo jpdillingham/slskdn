@@ -185,6 +185,112 @@ export const getAll = async ({ direction }) => {
 
 ---
 
+## Bug 4: search-list-no-pagination
+
+### Description
+The `GET /api/v0/searches` endpoint returns ALL searches without any pagination or limit. With heavy use, this can result in 100,000+ searches accumulating, producing a 45MB+ JSON response that hangs the browser.
+
+### Upstream Code (slskd master)
+```csharp
+// SearchesController.cs
+[HttpGet("")]
+[Authorize(Policy = AuthPolicy.Any)]
+public async Task<IActionResult> GetAll()
+{
+    if (Program.IsRelayAgent)
+    {
+        return Forbid();
+    }
+
+    var searches = await Searches.ListAsync();  // ⚠️ Returns ALL searches
+    return Ok(searches);
+}
+
+// SearchService.cs
+public Task<List<Search>> ListAsync(Expression<Func<Search, bool>> expression = null)
+{
+    expression ??= s => true;
+    using var context = ContextFactory.CreateDbContext();
+
+    return context.Searches
+        .AsNoTracking()
+        .Where(expression)
+        .WithoutResponses()
+        .ToListAsync();  // ⚠️ No limit, returns everything
+}
+```
+
+### slskdn Fixed Code
+```csharp
+// SearchesController.cs - adds optional pagination params
+[HttpGet("")]
+[Authorize(Policy = AuthPolicy.Any)]
+public async Task<IActionResult> GetAll([FromQuery] int limit = 0, [FromQuery] int offset = 0)
+{
+    if (Program.IsRelayAgent)
+    {
+        return Forbid();
+    }
+
+    var searches = await Searches.ListAsync(limit: limit, offset: offset);
+    return Ok(searches);
+}
+
+// SearchService.cs - supports pagination
+public Task<List<Search>> ListAsync(Expression<Func<Search, bool>> expression = null, int limit = 0, int offset = 0)
+{
+    expression ??= s => true;
+    using var context = ContextFactory.CreateDbContext();
+
+    var query = context.Searches
+        .AsNoTracking()
+        .Where(expression)
+        .OrderByDescending(s => s.StartedAt)
+        .WithoutResponses();
+
+    if (offset > 0)
+    {
+        query = query.Skip(offset);
+    }
+
+    if (limit > 0)
+    {
+        query = query.Take(limit);
+    }
+
+    return query.ToListAsync();
+}
+
+// Frontend: searches.js - explicitly requests limit
+export const getAll = async (limit = 500) => {
+  return (await api.get(`/searches?limit=${limit}`)).data;
+};
+```
+
+### Reproduction
+1. Use slskd heavily for weeks/months
+2. Accumulate 100,000+ searches
+3. Open the web UI
+4. Browser hangs trying to parse 45MB+ JSON response
+
+### Real-world Evidence
+Found on user's instance:
+- **153,835 searches** in database
+- **389MB search.db** file
+- **45MB JSON response** from /api/v0/searches
+- Browser completely unusable
+
+### Test Result
+- **Upstream**: Returns all 153k searches, browser hangs indefinitely
+- **slskdn**: Frontend requests limit=500, loads instantly
+
+### API Compatibility
+- Default `limit=0` preserves upstream behavior (unlimited)
+- Existing API clients unaffected
+- Only browser UI benefits from the limit
+
+---
+
 ## Summary
 
 | Bug | File | Upstream | slskdn | Severity |
@@ -192,12 +298,13 @@ export const getAll = async ({ direction }) => {
 | async-void-roomservice | RoomService.cs | No try-catch | try-catch wrapper | High (process crash) |
 | searches-undefined-return | searches.js | return undefined | return [] | Medium (UI crash) |
 | transfers-undefined-return | transfers.js | return undefined | return [] | Medium (UI crash) |
+| search-list-no-pagination | SearchService.cs, searches.js | No pagination | Optional limit/offset | High (browser hang) |
 | flaky-upload-governor-test | UploadGovernorTests.cs | AutoData random values | InlineAutoData fixed values | Low (flaky CI) |
 
 ## Ready for Upstream PR
-All three fixes are:
+All fixes are:
 - ✅ Minimal and focused
-- ✅ Non-breaking changes
+- ✅ Non-breaking changes (API defaults preserved)
 - ✅ Follow existing code patterns
 - ✅ Tested in slskdn
 

@@ -5,6 +5,11 @@ on:
     # Run daily at 9am UTC (polite, not aggressive)
     - cron: '0 9 * * *'
   workflow_dispatch:  # Manual trigger
+  push:
+    # Only here to prevent GitHub from showing "failed" on workflow file changes
+    # This path will never match, so push events never actually run
+    paths:
+      - '.github/workflows/this-file-does-not-exist-intentionally.yml'
 
 jobs:
   check-access:

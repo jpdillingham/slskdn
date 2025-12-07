@@ -708,11 +708,11 @@ namespace slskd
             services.AddSingleton<Transfers.AutoReplace.AutoReplaceBackgroundService>();
             services.AddHostedService(provider => provider.GetRequiredService<Transfers.AutoReplace.AutoReplaceBackgroundService>());
 
-            // Multi-source download services (experimental)
+            // Multi-source download services
             services.AddSingleton<Transfers.MultiSource.IContentVerificationService, Transfers.MultiSource.ContentVerificationService>();
             services.AddSingleton<Transfers.MultiSource.IMultiSourceDownloadService, Transfers.MultiSource.MultiSourceDownloadService>();
             services.AddSingleton<Transfers.MultiSource.Discovery.ISourceDiscoveryService, Transfers.MultiSource.Discovery.SourceDiscoveryService>();
-            services.AddHostedService<Transfers.MultiSource.Discovery.SourceDiscoveryService>(provider => (Transfers.MultiSource.Discovery.SourceDiscoveryService)provider.GetRequiredService<Transfers.MultiSource.Discovery.ISourceDiscoveryService>());
+            services.AddHostedService(provider => (Transfers.MultiSource.Discovery.SourceDiscoveryService)provider.GetRequiredService<Transfers.MultiSource.Discovery.ISourceDiscoveryService>());
 
             services.AddSingleton<IRelayService, RelayService>();
 

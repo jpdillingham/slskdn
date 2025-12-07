@@ -7,9 +7,11 @@
   <a href="https://github.com/snapetech/slskdn/releases">Releases</a> •
   <a href="https://github.com/snapetech/slskdn/issues">Issues</a> •
   <a href="#features">Features</a> •
-  <a href="#quick-start">Quick Start</a>
+  <a href="#quick-start">Quick Start</a> •
+  <a href="https://discord.gg/5PyXBfvS6T">Discord</a>
 </p>
 <p align="center">
+  <a href="https://discord.gg/5PyXBfvS6T"><img src="https://img.shields.io/badge/Discord-Join%20Chat-5865F2?logo=discord&logoColor=white" alt="Discord"></a>
   <a href="https://github.com/snapetech/slskdn/actions/workflows/ci.yml"><img src="https://github.com/snapetech/slskdn/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="https://github.com/snapetech/slskdn/releases"><img src="https://img.shields.io/github/v/release/snapetech/slskdn?label=version" alt="Version"></a>
   <a href="https://ghcr.io/snapetech/slskdn"><img src="https://img.shields.io/badge/docker-ghcr.io%2Fsnapetech%2Fslskdn-blue?logo=docker" alt="Docker"></a>

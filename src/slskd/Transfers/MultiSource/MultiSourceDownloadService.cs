@@ -391,117 +391,116 @@ namespace slskd.Transfers.MultiSource
             var consecutiveFailures = 0;
             const int maxConsecutiveFailures = 3;
 
+            status.IncrementActiveWorkers();
             Log.Information("[SWARM] Worker started: {Username}", username);
 
-            while (!cancellationToken.IsCancellationRequested)
+            try
             {
-                // Check if all chunks done
-                if (completedChunks.Count >= status.TotalChunks)
+                while (!cancellationToken.IsCancellationRequested)
                 {
-                    break;
-                }
-
-                // Try to grab a chunk from the queue
-                if (!chunkQueue.TryDequeue(out var chunk))
-                {
-                    // Queue empty - wait a bit and check again (other workers might requeue)
-                    await Task.Delay(100, cancellationToken);
-
-                    // If still empty and all done, exit
-                    if (chunkQueue.IsEmpty && completedChunks.Count >= status.TotalChunks)
+                    // Check if all chunks done
+                    if (completedChunks.Count >= status.TotalChunks)
                     {
                         break;
                     }
 
-                    // Try again
-                    continue;
-                }
-
-                // Skip if already completed by another worker
-                if (completedChunks.ContainsKey(chunk.Index))
-                {
-                    continue;
-                }
-
-                var chunkPath = IOPath.Combine(tempDir, $"chunk_{chunk.Index:D4}.bin");
-
-                try
-                {
-                    var result = await DownloadChunkAsync(
-                        username,
-                        sourcePath,
-                        fileSize,
-                        chunk.StartOffset,
-                        chunk.EndOffset,
-                        chunkPath,
-                        status,
-                        cancellationToken);
-
-                    if (result.Success)
+                    // Try to grab a chunk from the queue
+                    if (!chunkQueue.TryDequeue(out var chunk))
                     {
-                        completedChunks[chunk.Index] = result;
-                        sourceStats.AddOrUpdate(username, 1, (_, count) => count + 1);
-                        consecutiveFailures = 0; // Reset on success
+                        // Queue empty - wait a bit and check again (other workers might requeue)
+                        await Task.Delay(100, cancellationToken);
 
-                        Log.Information(
-                            "[SWARM] ✓ {Username} chunk {Index} @ {Speed:F0} KB/s [{Completed}/{Total}]",
-                            username,
-                            chunk.Index,
-                            result.SpeedBps / 1024.0,
-                            completedChunks.Count,
-                            status.TotalChunks);
+                        // If still empty and all done, exit
+                        if (chunkQueue.IsEmpty && completedChunks.Count >= status.TotalChunks)
+                        {
+                            break;
+                        }
+
+                        // Try again
+                        continue;
                     }
-                    else
+
+                    // Skip if already completed by another worker
+                    if (completedChunks.ContainsKey(chunk.Index))
+                    {
+                        continue;
+                    }
+
+                    var chunkPath = IOPath.Combine(tempDir, $"chunk_{chunk.Index:D4}.bin");
+
+                    try
+                    {
+                        var result = await DownloadChunkAsync(
+                            username,
+                            sourcePath,
+                            fileSize,
+                            chunk.StartOffset,
+                            chunk.EndOffset,
+                            chunkPath,
+                            status,
+                            cancellationToken);
+
+                        if (result.Success)
+                        {
+                            completedChunks[chunk.Index] = result;
+                            sourceStats.AddOrUpdate(username, 1, (_, count) => count + 1);
+                            consecutiveFailures = 0; // Reset on success
+
+                            Log.Information(
+                                "[SWARM] ✓ {Username} chunk {Index} @ {Speed:F0} KB/s [{Completed}/{Total}]",
+                                username,
+                                chunk.Index,
+                                result.SpeedBps / 1024.0,
+                                completedChunks.Count,
+                                status.TotalChunks);
+                        }
+                        else
+                        {
+                            consecutiveFailures++;
+                            Log.Warning("[SWARM] ✗ {Username} chunk {Index}: {Error} (fail {Fails}/{Max})",
+                                username, chunk.Index, result.Error, consecutiveFailures, maxConsecutiveFailures);
+
+                            // Put chunk back for another worker
+                            chunkQueue.Enqueue(chunk);
+
+                            // Only exit if too many consecutive failures
+                            if (consecutiveFailures >= maxConsecutiveFailures)
+                            {
+                                Log.Warning("[SWARM] {Username} giving up after {Fails} consecutive failures", username, consecutiveFailures);
+                                break;
+                            }
+
+                            // Small delay before retry
+                            await Task.Delay(500, cancellationToken);
+                        }
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        chunkQueue.Enqueue(chunk);
+                        break;
+                    }
+                    catch (Exception ex)
                     {
                         consecutiveFailures++;
-                        Log.Warning("[SWARM] ✗ {Username} chunk {Index}: {Error} (fail {Fails}/{Max})",
-                            username, chunk.Index, result.Error, consecutiveFailures, maxConsecutiveFailures);
+                        Log.Warning("[SWARM] ✗ {Username} chunk {Index} exception: {Message} (fail {Fails}/{Max})",
+                            username, chunk.Index, ex.Message, consecutiveFailures, maxConsecutiveFailures);
 
-                        // Put chunk back for another worker
                         chunkQueue.Enqueue(chunk);
 
-                        // Only exit if too many consecutive failures
                         if (consecutiveFailures >= maxConsecutiveFailures)
                         {
                             Log.Warning("[SWARM] {Username} giving up after {Fails} consecutive failures", username, consecutiveFailures);
                             break;
                         }
 
-                        // Small delay before retry
                         await Task.Delay(500, cancellationToken);
                     }
                 }
-                catch (OperationCanceledException)
-                {
-                    chunkQueue.Enqueue(chunk);
-                    break;
-                }
-                catch (Exception ex)
-                {
-                    consecutiveFailures++;
-                    Log.Warning("[SWARM] ✗ {Username} chunk {Index} exception: {Message} (fail {Fails}/{Max})",
-                        username, chunk.Index, ex.Message, consecutiveFailures, maxConsecutiveFailures);
-
-                    chunkQueue.Enqueue(chunk);
-
-                    if (consecutiveFailures >= maxConsecutiveFailures)
-                    {
-                        Log.Warning("[SWARM] {Username} giving up after {Fails} consecutive failures", username, consecutiveFailures);
-                        break;
-                    }
-
-                    await Task.Delay(500, cancellationToken);
-                }
             }
-
-            var chunksCompleted = sourceStats.GetValueOrDefault(username, 0);
-            if (chunksCompleted > 0)
+            finally
             {
-                Log.Information("[SWARM] Worker done: {Username} completed {Count} chunks ✓", username, chunksCompleted);
-            }
-            else
-            {
-                Log.Information("[SWARM] Worker done: {Username} completed 0 chunks", username);
+                status.DecrementActiveWorkers();
+                Log.Information("[SWARM] Worker finished: {Username} (Completed: {Count})", username, sourceStats.GetValueOrDefault(username, 0));
             }
         }
 
@@ -599,15 +598,18 @@ namespace slskd.Transfers.MultiSource
                 // Speed monitor - cancel if too slow for too long
                 var slowSince = (DateTime?)null;
                 var lastBytes = 0L;
+                var random = new Random();
+
                 var speedMonitorTask = Task.Run(async () =>
                 {
                     while (!cts.Token.IsCancellationRequested && !limitedStream.LimitReached)
                     {
-                        await Task.Delay(2000, cts.Token).ConfigureAwait(false);
+                        // Randomize check interval to prevent simultaneous cancellations
+                        await Task.Delay(2000 + random.Next(1000), cts.Token).ConfigureAwait(false);
 
                         var currentBytes = limitedStream.BytesWritten;
                         var bytesInInterval = currentBytes - lastBytes;
-                        var speedBps = bytesInInterval / 2; // 2 second interval
+                        var speedBps = bytesInInterval / 2; // 2 second interval (approx)
                         lastBytes = currentBytes;
 
                         if (speedBps < minSpeedBps && currentBytes > 0)
@@ -617,11 +619,21 @@ namespace slskd.Transfers.MultiSource
 
                             if (slowDuration >= slowDurationMs)
                             {
-                                Log.Warning("[SWARM] {Username} too slow ({Speed:F1} KB/s for {Duration:F0}s) - cycling out",
-                                    username, speedBps / 1024.0, slowDuration / 1000.0);
-                                result.Error = $"Too slow: {speedBps / 1024.0:F1} KB/s for {slowDuration / 1000.0:F0}s";
-                                cts.Cancel();
-                                return;
+                                // Only cycle out if we have other workers available
+                                if (status.ActiveWorkers > 1)
+                                {
+                                    Log.Warning("[SWARM] {Username} too slow ({Speed:F1} KB/s for {Duration:F0}s) - cycling out",
+                                        username, speedBps / 1024.0, slowDuration / 1000.0);
+                                    result.Error = $"Too slow: {speedBps / 1024.0:F1} KB/s for {slowDuration / 1000.0:F0}s";
+                                    cts.Cancel();
+                                    return;
+                                }
+                                else
+                                {
+                                    Log.Warning("[SWARM] {Username} is slow ({Speed:F1} KB/s) but is the LAST WORKER - keeping alive",
+                                        username, speedBps / 1024.0);
+                                    slowSince = DateTime.UtcNow; // Reset timer to avoid log spam
+                                }
                             }
                         }
                         else

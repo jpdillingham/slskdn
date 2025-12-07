@@ -210,6 +210,7 @@ namespace slskd.Transfers.MultiSource
         private long bytesDownloaded;
         private int activeChunks;
         private int completedChunks;
+        private int activeWorkers;
 
         /// <summary>
         ///     Gets or sets the download ID.
@@ -250,6 +251,15 @@ namespace slskd.Transfers.MultiSource
         }
 
         /// <summary>
+        ///     Gets or sets the number of active workers.
+        /// </summary>
+        public int ActiveWorkers
+        {
+            get => System.Threading.Interlocked.CompareExchange(ref activeWorkers, 0, 0);
+            set => System.Threading.Interlocked.Exchange(ref activeWorkers, value);
+        }
+
+        /// <summary>
         ///     Gets or sets the number of completed chunks.
         /// </summary>
         public int CompletedChunks
@@ -277,6 +287,16 @@ namespace slskd.Transfers.MultiSource
         ///     Thread-safe decrement of active chunks.
         /// </summary>
         public void DecrementActiveChunks() => System.Threading.Interlocked.Decrement(ref activeChunks);
+
+        /// <summary>
+        ///     Thread-safe increment of active workers.
+        /// </summary>
+        public void IncrementActiveWorkers() => System.Threading.Interlocked.Increment(ref activeWorkers);
+
+        /// <summary>
+        ///     Thread-safe decrement of active workers.
+        /// </summary>
+        public void DecrementActiveWorkers() => System.Threading.Interlocked.Decrement(ref activeWorkers);
 
         /// <summary>
         ///     Thread-safe increment of completed chunks.

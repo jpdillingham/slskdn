@@ -248,8 +248,7 @@ The following analysis outlines potential extension points within the existing S
 ## Known Issues / TODO
 
 1.  **No dynamic source discovery**: Pool is built once at start; new sources aren't discovered mid-download.
-2.  **Discovery DB hash population**: The discovery database stores sources by size but not SHA256 hashes. Hash verification happens at download time. Consider background hash collection.
-3.  **Connection overhead**: TTFB is 2-5 seconds per chunk due to Soulseek connection setup. Larger chunks amortize this better.
+2.  **Connection overhead**: TTFB is 2-5 seconds per chunk due to Soulseek connection setup. Larger chunks amortize this better.
 
 ## Resolved Issues ✅
 
@@ -257,6 +256,64 @@ The following analysis outlines potential extension points within the existing S
 2.  ~~**Race condition in speculative execution**~~: Fixed with atomic chunk writes
 3.  ~~**Premature failure with 5 retry limit**~~: Fixed with unlimited retries + stuck detection
 4.  ~~**80-100% overhead with small chunks**~~: Fixed by increasing to 512KB chunks
+5.  ~~**Discovery DB hash population**~~: Phase 2 HashDb now stores verified hashes for future lookups
+
+---
+
+## Implementation Progress
+
+### Phase 1: Capability Discovery ✅ COMPLETE
+
+Implemented peer capability discovery for `slskdn` clients to find each other on the network.
+
+**API Endpoints:**
+```
+GET  /api/v0/capabilities           → Our capabilities
+GET  /api/v0/capabilities/peers     → Known slskdn peers
+POST /api/v0/capabilities/parse     → Parse capability strings
+```
+
+**Capability Tag Format:**
+```
+slskdn_caps:v1;dht=1;mesh=1;swarm=1;hashx=1;flacdb=1
+```
+
+**Version String Format:**
+```
+slskdn/1.0.0+dht+mesh+swarm
+```
+
+### Phase 2: Local Hash Database ✅ COMPLETE
+
+Implemented SQLite-based hash database for tracking peers, FLAC inventory, and content-addressed hashes.
+
+**Database Tables:**
+- `Peers` - Capability tracking, backfill rate limiting
+- `FlacInventory` - File inventory with hash verification status
+- `HashDb` - Content-addressed hash store (64-bit keys, seq_id for sync)
+- `MeshPeerState` - Delta sync state per peer
+
+**API Endpoints:**
+```
+GET  /api/v0/hashdb/stats                → Database statistics
+GET  /api/v0/hashdb/hash/{key}           → Lookup by FLAC key
+GET  /api/v0/hashdb/hash/by-size/{size}  → Find hashes by file size
+POST /api/v0/hashdb/hash                 → Store verification result
+GET  /api/v0/hashdb/sync/since/{seq}     → Delta sync endpoint
+POST /api/v0/hashdb/sync/merge           → Receive mesh entries
+```
+
+### Phase 3: DHT/Mesh Sync Protocol ⬜ PENDING
+
+Will implement gossip-based eventual consistency for hash sharing between `slskdn` clients.
+
+### Phase 4: Backfill Scheduler ⬜ PENDING
+
+Will implement conservative header probing for long-tail content with strict rate limits.
+
+### Phase 5: Integration ⬜ PENDING
+
+Will integrate hash database with content verification for instant lookups
 
 ---
 

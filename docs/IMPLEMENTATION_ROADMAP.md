@@ -14,21 +14,38 @@ This document maps out the complete implementation path for building out the mul
 
 | Component | Location | Status |
 |-----------|----------|--------|
-| Multi-source chunked downloads (SWARM mode) | `src/slskd/Transfers/MultiSource/MultiSourceDownloadService.cs` | Working |
-| Content verification (FLAC MD5 + SHA256) | `src/slskd/Transfers/MultiSource/ContentVerificationService.cs` | Working |
-| FLAC STREAMINFO parser | `src/slskd/Transfers/MultiSource/FlacStreamInfo.cs` | Working |
-| Source discovery service | `src/slskd/Transfers/MultiSource/Discovery/SourceDiscoveryService.cs` | Working |
-| API endpoints for swarm downloads | `src/slskd/Transfers/MultiSource/API/MultiSourceController.cs` | Working |
-| LimitedWriteStream for chunk downloads | `ContentVerificationService.cs` | Working |
-| SQLite-based discovery database | `SourceDiscoveryService.cs` | Partial |
+| Multi-source chunked downloads (SWARM mode) | `src/slskd/Transfers/MultiSource/MultiSourceDownloadService.cs` | ✅ Working |
+| Content verification (SHA256 32KB) | `src/slskd/Transfers/MultiSource/ContentVerificationService.cs` | ✅ Working |
+| FLAC STREAMINFO parser | `src/slskd/Transfers/MultiSource/FlacStreamInfo.cs` | ✅ Working |
+| Source discovery service | `src/slskd/Transfers/MultiSource/Discovery/SourceDiscoveryService.cs` | ✅ Working |
+| API endpoints for swarm downloads | `src/slskd/Transfers/MultiSource/API/MultiSourceController.cs` | ✅ Working |
+| LimitedWriteStream for chunk downloads | `ContentVerificationService.cs` | ✅ Working |
+| **Phase 1: Capability Discovery** | `src/slskd/Capabilities/` | ✅ **COMPLETE** |
+| **Phase 2: Local Hash Database** | `src/slskd/HashDb/` | ✅ **COMPLETE** |
+
+### Phase 1 Components (COMPLETE) ✅
+
+| Component | Location | Description |
+|-----------|----------|-------------|
+| ICapabilityService | `src/slskd/Capabilities/ICapabilityService.cs` | Interface with PeerCapabilityFlags |
+| CapabilityService | `src/slskd/Capabilities/CapabilityService.cs` | UserInfo tag parsing, version string parsing |
+| CapabilitiesController | `src/slskd/Capabilities/API/CapabilitiesController.cs` | REST API endpoints |
+
+### Phase 2 Components (COMPLETE) ✅
+
+| Component | Location | Description |
+|-----------|----------|-------------|
+| IHashDbService | `src/slskd/HashDb/IHashDbService.cs` | Full interface with mesh sync support |
+| HashDbService | `src/slskd/HashDb/HashDbService.cs` | SQLite implementation |
+| HashDbController | `src/slskd/HashDb/API/HashDbController.cs` | REST API endpoints |
+| Peer model | `src/slskd/HashDb/Models/Peer.cs` | Capability & backfill tracking |
+| FlacInventoryEntry | `src/slskd/HashDb/Models/FlacInventoryEntry.cs` | File inventory with hash status |
+| HashDbEntry | `src/slskd/HashDb/Models/HashDbEntry.cs` | Content-addressed DHT entry |
 
 ### Not Yet Implemented ❌
 
 | Feature | Priority | Complexity |
 |---------|----------|------------|
-| Protocol Extensions (UserInfo caps, Version string) | HIGH | Medium |
-| Peers Table with capability tracking | HIGH | Low |
-| FLAC Inventory Table (enhanced schema) | HIGH | Medium |
 | DHT/Mesh Sync Protocol | HIGH | High |
 | Backfill Scheduler with rate limiting | MEDIUM | Medium |
 | Capability File sharing (`__slskdn_caps__`) | MEDIUM | Low |
@@ -38,33 +55,39 @@ This document maps out the complete implementation path for building out the mul
 
 ---
 
-## Phase 1: Protocol Extensions - Capability Discovery
+## Phase 1: Protocol Extensions - Capability Discovery ✅ COMPLETE
 
-### 1.1 UserInfo Tag Advertisement
+> **Status:** Implemented and tested. Commit `2847b35d`
 
-**Purpose:** Advertise `slskdn` capabilities in the user description field.
+### 1.1 UserInfo Tag Advertisement ✅
 
-**Implementation:**
+**Implementation:** `src/slskd/Capabilities/`
 
-1. Create `ICapabilityService` interface:
+Capability tag format:
+```
+slskdn_caps:v1;dht=1;mesh=1;swarm=1;hashx=1;flacdb=1
+```
+
+### 1.2 Client Version String Extension ✅
+
+Version string format:
+```
+slskdn/1.0.0+dht+mesh+swarm
+```
+
+### 1.3 API Endpoints ✅
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /api/v0/capabilities` | Our capabilities (version, tag, JSON) |
+| `GET /api/v0/capabilities/peers` | All known slskdn peers |
+| `GET /api/v0/capabilities/peers/{username}` | Specific peer capabilities |
+| `GET /api/v0/capabilities/mesh-peers` | Mesh-capable peers |
+| `POST /api/v0/capabilities/parse` | Parse description/version strings |
+
+### 1.4 PeerCapabilityFlags ✅
 
 ```csharp
-// src/slskd/Capabilities/ICapabilityService.cs
-public interface ICapabilityService
-{
-    /// <summary>Generates the capability tag string for UserInfo.</summary>
-    string GetCapabilityTag();
-    
-    /// <summary>Parses capability tag from a peer's description.</summary>
-    PeerCapabilities ParseCapabilityTag(string description);
-    
-    /// <summary>Gets capabilities for a known peer.</summary>
-    PeerCapabilities GetPeerCapabilities(string username);
-    
-    /// <summary>Records discovered capabilities for a peer.</summary>
-    void SetPeerCapabilities(string username, PeerCapabilities caps);
-}
-
 [Flags]
 public enum PeerCapabilityFlags
 {
@@ -74,180 +97,107 @@ public enum PeerCapabilityFlags
     SupportsPartialDownload = 1 << 2,
     SupportsMeshSync = 1 << 3,
     SupportsFlacHashDb = 1 << 4,
-}
-
-public class PeerCapabilities
-{
-    public PeerCapabilityFlags Flags { get; set; }
-    public string ClientVersion { get; set; }
-    public DateTime LastSeen { get; set; }
-    public DateTime LastCapCheck { get; set; }
+    SupportsSwarm = 1 << 5,
 }
 ```
 
-2. Modify user info response to append capability tag:
-
-```
-Format: ... existing description ... | slskdn_caps:v1;dht=1;hashx=1;mesh=1
-```
-
-**Files to create/modify:**
-- `src/slskd/Capabilities/ICapabilityService.cs` (NEW)
-- `src/slskd/Capabilities/CapabilityService.cs` (NEW)
-- `src/slskd/Capabilities/CapabilityDbContext.cs` (NEW)
-- `src/slskd/Users/UserService.cs` (MODIFY - inject capability tag)
-- `src/slskd/Program.cs` (MODIFY - register services)
-
-### 1.2 Client Version String Extension
-
-**Purpose:** Passive capability discovery via version string.
-
-**Implementation:**
-
-Append capability token to the client version string sent during peer connection:
-
-```
-"slskdn/1.0.0+dht+mesh"
-```
-
-**Files to modify:**
-- `src/slskd/Core/SoulseekClientFactory.cs` or equivalent
-
-### 1.3 Capability File Sharing (Virtual File)
-
-**Purpose:** Active capability negotiation via phantom file request.
-
-**Implementation:**
-
-1. Share a virtual file at path: `@@slskdn/__caps__.json`
-2. When requested, return JSON with capabilities:
-
-```json
-{
-  "client": "slskdn",
-  "version": "1.0.0",
-  "features": ["dht", "hash_exchange", "mesh_sync", "flac_hash_db"],
-  "protocol_version": 1,
-  "mesh_seq_id": 847291
-}
-```
-
-3. Requesting this file from another peer triggers capability detection.
-
-**Files to create:**
-- `src/slskd/Capabilities/VirtualCapabilityFileHandler.cs` (NEW)
+### Files Created:
+- `src/slskd/Capabilities/ICapabilityService.cs` ✅
+- `src/slskd/Capabilities/CapabilityService.cs` ✅
+- `src/slskd/Capabilities/API/CapabilitiesController.cs` ✅
+- `src/slskd/Program.cs` (MODIFIED - service registration) ✅
 
 ---
 
-## Phase 2: Local Hash Database - Enhanced Schema
+## Phase 2: Local Hash Database - Enhanced Schema ✅ COMPLETE
 
-### 2.1 Database Schema
+> **Status:** Implemented and tested. Commit `b790d696`
 
-Replace/enhance the existing `discovery.db` with a comprehensive schema:
+### 2.1 Database Schema ✅
+
+SQLite database at `{AppDirectory}/hashdb.db` with 4 tables:
 
 ```sql
 -- Peer tracking with capabilities
 CREATE TABLE Peers (
-    peer_id TEXT PRIMARY KEY,          -- Soulseek username
+    peer_id TEXT PRIMARY KEY,
     caps INTEGER DEFAULT 0,            -- PeerCapabilityFlags bitfield
-    client_version TEXT,               -- Detected client version
-    last_seen INTEGER NOT NULL,        -- Unix timestamp
-    last_cap_check INTEGER,            -- Unix timestamp of last capability probe
-    backfills_today INTEGER DEFAULT 0, -- Header probes done today
-    backfill_reset_date INTEGER        -- Date for backfill counter reset
+    client_version TEXT,
+    last_seen INTEGER NOT NULL,
+    last_cap_check INTEGER,
+    backfills_today INTEGER DEFAULT 0,
+    backfill_reset_date INTEGER
 );
 
 -- FLAC file inventory with hash tracking
 CREATE TABLE FlacInventory (
     file_id TEXT PRIMARY KEY,          -- sha256(peer_id + path + size)
-    peer_id TEXT NOT NULL,             -- Owner username
-    path TEXT NOT NULL,                 -- Full remote path
-    size INTEGER NOT NULL,              -- File size in bytes
-    discovered_at INTEGER NOT NULL,     -- Unix timestamp
-    hash_status TEXT DEFAULT 'none',    -- 'none'/'known'/'pending'/'failed'
-    hash_value TEXT,                    -- FLAC STREAMINFO MD5 (nullable)
-    hash_source TEXT,                   -- 'local_scan'/'peer_dht'/'backfill_sniff'/'mesh_sync'
-    sample_rate INTEGER,                -- Audio sample rate
-    channels INTEGER,                   -- Number of channels
-    bit_depth INTEGER,                  -- Bits per sample
-    duration_samples INTEGER,           -- Total samples
-    FOREIGN KEY (peer_id) REFERENCES Peers(peer_id)
+    peer_id TEXT NOT NULL,
+    path TEXT NOT NULL,
+    size INTEGER NOT NULL,
+    discovered_at INTEGER NOT NULL,
+    hash_status TEXT DEFAULT 'none',   -- 'none'/'known'/'pending'/'failed'
+    hash_value TEXT,                   -- SHA256 of first 32KB
+    hash_source TEXT,                  -- 'local_scan'/'peer_dht'/'backfill_sniff'/'mesh_sync'
+    flac_audio_md5 TEXT,               -- FLAC STREAMINFO MD5 (reference only)
+    sample_rate INTEGER,
+    channels INTEGER,
+    bit_depth INTEGER,
+    duration_samples INTEGER
 );
 
 -- DHT/Mesh hash database (content-addressed)
 CREATE TABLE HashDb (
-    flac_key TEXT PRIMARY KEY,         -- sha1(normalized_filename + ':' + size)
-    flac_md5 BLOB NOT NULL,            -- 16-byte FLAC STREAMINFO MD5
-    size INTEGER NOT NULL,              -- File size
-    meta_flags INTEGER,                 -- Optional: packed sample_rate/channels/bit_depth
-    first_seen_at INTEGER NOT NULL,     -- Unix timestamp
-    last_updated_at INTEGER NOT NULL,   -- Unix timestamp
-    seq_id INTEGER                      -- Monotonic sequence for delta sync
+    flac_key TEXT PRIMARY KEY,         -- 64-bit truncated hash (16 hex chars)
+    byte_hash TEXT NOT NULL,           -- SHA256 of first 32KB
+    size INTEGER NOT NULL,
+    meta_flags INTEGER,                -- Packed sample_rate/channels/bit_depth
+    first_seen_at INTEGER NOT NULL,
+    last_updated_at INTEGER NOT NULL,
+    seq_id INTEGER,                    -- Monotonic sequence for delta sync
+    use_count INTEGER DEFAULT 1
 );
 
 -- Mesh sync state per peer
 CREATE TABLE MeshPeerState (
     peer_id TEXT PRIMARY KEY,
-    caps INTEGER DEFAULT 0,
     last_sync_time INTEGER,
-    last_seq_seen INTEGER DEFAULT 0,    -- Highest sequence ID received
-    FOREIGN KEY (peer_id) REFERENCES Peers(peer_id)
+    last_seq_seen INTEGER DEFAULT 0
 );
-
--- Backfill scheduler state
-CREATE TABLE BackfillState (
-    key TEXT PRIMARY KEY,
-    value TEXT
-);
-
--- Indexes for performance
-CREATE INDEX idx_inventory_peer ON FlacInventory(peer_id);
-CREATE INDEX idx_inventory_size ON FlacInventory(size);
-CREATE INDEX idx_inventory_hash ON FlacInventory(hash_value);
-CREATE INDEX idx_inventory_status ON FlacInventory(hash_status);
-CREATE INDEX idx_hashdb_size ON HashDb(size);
-CREATE INDEX idx_hashdb_seq ON HashDb(seq_id);
 ```
 
-### 2.2 Database Service
+### 2.2 API Endpoints ✅
 
-**Files to create:**
-- `src/slskd/HashDb/IHashDbService.cs` (NEW)
-- `src/slskd/HashDb/HashDbService.cs` (NEW)
-- `src/slskd/HashDb/HashDbContext.cs` (NEW - EF Core or raw SQLite)
-- `src/slskd/HashDb/Models/` (NEW - entity classes)
+| Endpoint | Description |
+|----------|-------------|
+| `GET /api/v0/hashdb/stats` | Database statistics |
+| `GET /api/v0/hashdb/hash/{flacKey}` | Lookup hash by key |
+| `GET /api/v0/hashdb/hash/by-size/{size}` | Find all hashes for a file size |
+| `GET /api/v0/hashdb/key?filename=&size=` | Generate FLAC key |
+| `POST /api/v0/hashdb/hash` | Store verification result |
+| `GET /api/v0/hashdb/inventory/by-size/{size}` | Inventory lookup |
+| `GET /api/v0/hashdb/inventory/unhashed` | Files pending verification |
+| `GET /api/v0/hashdb/backfill/candidates` | Backfill candidates |
+| `GET /api/v0/hashdb/peers` | Tracked peers |
+| `GET /api/v0/hashdb/sync/since/{seq}` | Delta sync endpoint |
+| `POST /api/v0/hashdb/sync/merge` | Receive mesh entries |
 
-**Key methods:**
+### 2.3 Key Features ✅
 
-```csharp
-public interface IHashDbService
-{
-    // Peer management
-    Task<Peer> GetOrCreatePeerAsync(string username);
-    Task UpdatePeerCapabilitiesAsync(string username, PeerCapabilityFlags caps);
-    
-    // Inventory management
-    Task UpsertFlacEntryAsync(FlacInventoryEntry entry);
-    Task<FlacInventoryEntry> GetFlacEntryAsync(string fileId);
-    Task<IEnumerable<FlacInventoryEntry>> GetUnhashedFlacFilesAsync(int limit);
-    
-    // Hash database (content-addressed)
-    Task<string> LookupHashAsync(string flacKey);
-    Task StoreHashAsync(string flacKey, byte[] flacMd5, long size, int? metaFlags);
-    
-    // Mesh sync
-    Task<long> GetLatestSeqIdAsync();
-    Task<IEnumerable<HashDbEntry>> GetEntriesSinceSeqAsync(long sinceSeq, int limit);
-    Task MergeEntriesFromMeshAsync(IEnumerable<HashDbEntry> entries);
-    Task<long> GetPeerLastSeqSeenAsync(string peerId);
-    Task UpdatePeerLastSeqSeenAsync(string peerId, long seqId);
-    
-    // Backfill scheduling
-    Task<IEnumerable<FlacInventoryEntry>> GetBackfillCandidatesAsync(int limit);
-    Task IncrementPeerBackfillCountAsync(string peerId);
-    Task<int> GetPeerBackfillCountTodayAsync(string peerId);
-}
-```
+- **64-bit truncated FLAC keys** for compact storage
+- **Monotonic seq_id** for efficient delta sync
+- **Per-peer backfill rate limiting** (50/day max)
+- **Conflict detection** on mesh merge
+- **use_count tracking** for pruning unused entries
+
+### Files Created:
+- `src/slskd/HashDb/IHashDbService.cs` ✅
+- `src/slskd/HashDb/HashDbService.cs` ✅
+- `src/slskd/HashDb/API/HashDbController.cs` ✅
+- `src/slskd/HashDb/Models/Peer.cs` ✅
+- `src/slskd/HashDb/Models/FlacInventoryEntry.cs` ✅
+- `src/slskd/HashDb/Models/HashDbEntry.cs` ✅
+- `src/slskd/Program.cs` (MODIFIED - service registration) ✅
 
 ---
 
@@ -505,26 +455,26 @@ POST /api/v0/backfill/trigger
 
 ## Implementation Order
 
-### Sprint 1: Foundation (Week 1-2)
-1. ✅ Existing multi-source system (already done)
-2. Create `HashDbService` with new schema
-3. Create `CapabilityService` with UserInfo tag
+### Sprint 1: Foundation ✅ COMPLETE
+1. ✅ Existing multi-source system (WORKING - verified Dec 2025)
+2. ✅ Create `CapabilityService` with UserInfo tag (Phase 1 - commit `2847b35d`)
+3. ✅ Create `HashDbService` with new schema (Phase 2 - commit `b790d696`)
 
-### Sprint 2: Hash Resolution (Week 3-4)
-4. Integrate hash lookup into `ContentVerificationService`
-5. Add passive hash collection from downloads
-6. Create `BackfillSchedulerService` (basic)
+### Sprint 2: Hash Resolution (In Progress)
+4. ⬜ Integrate hash lookup into `ContentVerificationService`
+5. ⬜ Add passive hash collection from downloads
+6. ⬜ Create `BackfillSchedulerService` (basic)
 
-### Sprint 3: Mesh Sync (Week 5-6)
-7. Create `MeshSyncService` with protocol handlers
-8. Integrate mesh sync triggers into peer interactions
-9. Add mesh delta sync logic
+### Sprint 3: Mesh Sync (Pending)
+7. ⬜ Create `MeshSyncService` with protocol handlers
+8. ⬜ Integrate mesh sync triggers into peer interactions
+9. ⬜ Add mesh delta sync logic
 
-### Sprint 4: Polish & Testing (Week 7-8)
-10. API endpoints for hash DB / mesh / backfill
-11. Web UI integration (optional)
-12. Load testing with real network
-13. Documentation updates
+### Sprint 4: Polish & Testing (Pending)
+10. ✅ API endpoints for hash DB / capabilities (complete)
+11. ⬜ Web UI integration (optional)
+12. ⬜ Load testing with real network
+13. ⬜ Documentation updates
 
 ---
 

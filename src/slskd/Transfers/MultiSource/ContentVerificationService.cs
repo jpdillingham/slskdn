@@ -21,6 +21,7 @@ namespace slskd.Transfers.MultiSource
     using System.Collections.Generic;
     using System.Diagnostics;
     using System.IO;
+    using System.Linq;
     using System.Security.Cryptography;
     using System.Threading;
     using System.Threading.Tasks;
@@ -60,20 +61,25 @@ namespace slskd.Transfers.MultiSource
                 FileSize = request.FileSize,
             };
 
+            // Support both old (CandidateUsernames) and new (CandidateSources) API
+            var sourcesToVerify = request.CandidateSources.Count > 0
+                ? request.CandidateSources
+                : request.CandidateUsernames.ToDictionary(u => u, _ => request.Filename);
+
             Log.Information(
                 "Verifying {Count} sources for {Filename} ({Size} bytes)",
-                request.CandidateUsernames.Count,
+                sourcesToVerify.Count,
                 request.Filename,
                 request.FileSize);
 
             // Verify all candidates in parallel
             var verificationTasks = new List<Task<(string Username, string Hash, VerificationMethod Method, long TimeMs, string Error)>>();
 
-            foreach (var username in request.CandidateUsernames)
+            foreach (var kvp in sourcesToVerify)
             {
                 verificationTasks.Add(VerifySingleSourceAsync(
-                    username,
-                    request.Filename,
+                    kvp.Key,       // username
+                    kvp.Value,     // each user's specific filename
                     request.FileSize,
                     request.TimeoutMs,
                     cancellationToken));
@@ -103,6 +109,7 @@ namespace slskd.Transfers.MultiSource
                 sources.Add(new VerifiedSource
                 {
                     Username = username,
+                    FullPath = sourcesToVerify[username],  // Store each user's specific path
                     ContentHash = hash,
                     Method = method,
                     VerificationTimeMs = timeMs,

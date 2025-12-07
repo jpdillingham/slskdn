@@ -522,7 +522,7 @@ namespace slskd.Transfers.MultiSource.API
                     {
                         Filename = allSources.First().FullPath,
                         FileSize = request.Size,
-                        CandidateUsernames = allSources.Select(s => s.Username).ToList(),
+                        CandidateSources = allSources.ToDictionary(s => s.Username, s => s.FullPath),
                         TimeoutMs = 30000,
                     },
                     HttpContext.RequestAborted);
@@ -644,7 +644,7 @@ namespace slskd.Transfers.MultiSource.API
                     {
                         Filename = allSources.First().FullPath,
                         FileSize = request.Size,
-                        CandidateUsernames = allSources.Select(s => s.Username).ToList(),
+                        CandidateSources = allSources.ToDictionary(s => s.Username, s => s.FullPath),
                         TimeoutMs = 30000,
                     },
                     HttpContext.RequestAborted);

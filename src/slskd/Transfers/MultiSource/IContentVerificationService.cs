@@ -57,7 +57,7 @@ namespace slskd.Transfers.MultiSource
     public class ContentVerificationRequest
     {
         /// <summary>
-        ///     Gets or sets the filename to verify.
+        ///     Gets or sets the filename to verify (used for logging only).
         /// </summary>
         public string Filename { get; set; }
 
@@ -67,9 +67,15 @@ namespace slskd.Transfers.MultiSource
         public long FileSize { get; set; }
 
         /// <summary>
-        ///     Gets or sets the list of candidate source usernames.
+        ///     Gets or sets the list of candidate source usernames (deprecated - use CandidateSources).
         /// </summary>
         public List<string> CandidateUsernames { get; set; } = new();
+
+        /// <summary>
+        ///     Gets or sets the list of candidate sources with their filenames.
+        ///     Each entry maps username to their specific file path.
+        /// </summary>
+        public Dictionary<string, string> CandidateSources { get; set; } = new();
 
         /// <summary>
         ///     Gets or sets the timeout for each verification attempt in milliseconds.

@@ -219,38 +219,40 @@ dotnet run --project src/slskd/slskd.csproj
 | Ntfy/Pushover notifications | ❌ | ✅ |
 | Tabbed browsing | ❌ | ✅ |
 | Smart source ranking | ❌ | ✅ |
-| Multi-source downloads | ❌ | 🧪 |
+| Multi-source downloads | ❌ | ✅ 🧪 |
 | PWA support | ❌ | ✅ |
-| Distributed hash mesh | ❌ | 🔜 |
-| DHT Beacon discovery | ❌ | 🔜 |
-| NAT traversal assistance | ❌ | 🔜 |
-| Security hardening | ❌ | 🔜 |
+| Distributed hash mesh | ❌ | ✅ 🧪 |
+| DHT peer discovery | ❌ | ✅ 🧪 |
+| NAT traversal assistance | ❌ | ✅ 🧪 |
+| Security hardening | ❌ | ✅ 🧪 |
 | Open to community feedback | 🔒 | ✅ |
 
-## 🔜 Upcoming Features
+## 🧪 Experimental Features (Available in Dev Builds)
 
-Features currently in development across our experimental branches:
+The following features are **implemented and available** in our `-dev` release channel. Install from dev builds or build from `experimental/merge` branch:
 
-### 🌐 Multi-Source Swarm Downloads *(experimental/multi-source-swarm)*
+### 🌐 Multi-Source Swarm Downloads ✅
 - **Swarm mode** — Download chunks from multiple peers simultaneously (BitTorrent-style)
 - **Distributed hash database** — SQLite-backed content verification with mesh sync
 - **Epidemic mesh protocol** — Gossip-based hash sharing between slskdN clients
-- **BitTorrent DHT rendezvous** — Decentralized peer discovery for mesh bootstrap
+- **BitTorrent DHT rendezvous** — Decentralized peer discovery (60+ bootstrap nodes)
 - **Capability discovery** — Auto-detect other slskdN clients on the network
-- **Backfill scheduler** — Conservative header probing for long-tail content
-- **CONNECT_ASSIST** — Signaling-first NAT traversal to help firewalled users
-- **Karma system** — Earn reputation by helping relay connections and sharing hashes
+- **NAT detection** — UPnP/NAT-PMP support for firewalled users
+- **Live status bar** — Real-time DHT nodes, mesh peers, and hash counts in UI
 
-### 🔒 Security Hardening *(experimental/security)*
-- **PathGuard** — Path traversal protection with sandboxing and symlink validation
-- **Byzantine consensus** — Multi-peer verification for untrusted content
-- **Honeypot detection** — Identify and avoid malicious peers
-- **Canary traps** — Detect unauthorized redistribution of shared files
-- **Probabilistic verification** — Efficient content integrity checking
-- **Rate limiting** — Abuse prevention and resource protection
-- **Security dashboard** — Real-time monitoring and threat visualization
+### 🔒 Security Hardening ✅
+- **NetworkGuard** — Rate limiting and connection caps
+- **ViolationTracker** — Auto-escalating bans for bad actors
+- **PathGuard** — Path traversal protection with sandboxing
+- **ContentSafety** — Magic byte verification to detect disguised executables
+- **PeerReputation** — Behavioral scoring system
+- **ByzantineConsensus** — 2/3+1 voting for multi-source verification
+- **EntropyMonitor** — RNG health monitoring
+- **FingerprintDetection** — Reconnaissance detection
+- **Honeypot & CanaryTraps** — Threat profiling
+- **Security dashboard** — Real-time monitoring in Web UI
 
-> 💡 Want to try these features early? Check out our experimental branches on GitHub!
+> 📦 **Dev builds**: Check [Releases](https://github.com/snapetech/slskdn/releases) for tags ending in `-slskdn.XX`
 
 ## Configuration
 slskdN uses the same config format as slskd, with additional options:

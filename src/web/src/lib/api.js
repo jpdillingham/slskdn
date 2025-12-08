@@ -25,15 +25,12 @@ api.interceptors.response.use(
     return response;
   },
   (error) => {
-    // Don't reload if we're already on login page or for excluded endpoints
-    const isLoginPage =
-      window.location.pathname === '/' ||
-      window.location.pathname.endsWith('/');
-    const isExcludedEndpoint = ['/session', '/server', '/application'].includes(
-      error.response?.config?.url,
-    );
-
-    if (error.response?.status === 401 && !isExcludedEndpoint && !isLoginPage) {
+    if (
+      error.response.status === 401 &&
+      !['/session', '/server', '/application'].includes(
+        error.response.config.url,
+      )
+    ) {
       console.debug('received 401 from api route, logging out');
       clearToken();
       window.location.reload(true);

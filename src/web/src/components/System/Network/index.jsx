@@ -72,17 +72,17 @@ const Network = () => {
   const fetchData = useCallback(async () => {
     try {
       const [statsData, peersData, discoveredData] = await Promise.all([
-        slskdnAPI.getSlskdnStats(),
+        slskdnAPI.getSlskdnStats().catch(() => ({})),
         slskdnAPI.getMeshPeers().catch(() => []),
         slskdnAPI.getDiscoveredPeers().catch(() => []),
       ]);
 
-      setStats(statsData);
-      setMeshPeers(peersData || []);
-      setDiscoveredPeers(discoveredData || []);
+      setStats(statsData || {});
+      setMeshPeers(Array.isArray(peersData) ? peersData : []);
+      setDiscoveredPeers(Array.isArray(discoveredData) ? discoveredData : []);
     } catch (error) {
       console.error('Failed to fetch network stats:', error);
-      toast.error('Failed to fetch network statistics');
+      // Don't show toast on every poll failure
     } finally {
       setLoading(false);
     }

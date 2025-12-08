@@ -76,16 +76,27 @@ export const getSwarmJob = async (jobId) => {
   return safeGet(`/multisource/jobs/${jobId}`, null);
 };
 
+// DHT API
+export const getDhtStatus = async () => {
+  return safeGet('/dht/status', {
+    dhtNodeCount: 0,
+    isBeaconCapable: false,
+    isDhtRunning: false,
+    verifiedBeaconCount: 0,
+  });
+};
+
 // Combined stats fetch for dashboard
 export const getSlskdnStats = async () => {
   try {
-    const [capabilities, hashDatabase, mesh, backfill, swarmJobs] =
+    const [capabilities, hashDatabase, mesh, backfill, swarmJobs, dht] =
       await Promise.allSettled([
         getCapabilities(),
         getHashDatabaseStats(),
         getMeshStats(),
         getBackfillStats(),
         getActiveSwarmJobs(),
+        getDhtStatus(),
       ]);
 
     // Normalize hashDb response to match frontend expectations
@@ -130,6 +141,7 @@ export const getSlskdnStats = async () => {
       backfill: normalizedBackfill,
       capabilities:
         capabilities.status === 'fulfilled' ? capabilities.value : null,
+      dht: dht.status === 'fulfilled' ? dht.value : null,
       hashDb: normalizedHashDatabase,
       mesh: normalizedMesh,
       swarmJobs: swarmJobs.status === 'fulfilled' ? swarmJobs.value : [],
@@ -139,6 +151,7 @@ export const getSlskdnStats = async () => {
     return {
       backfill: { isActive: false },
       capabilities: null,
+      dht: null,
       hashDb: { currentSeqId: 0, totalEntries: 0 },
       mesh: { connectedPeerCount: 0, isSyncing: false, localSeqId: 0 },
       swarmJobs: [],

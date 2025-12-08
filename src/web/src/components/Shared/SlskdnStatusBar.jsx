@@ -46,11 +46,15 @@ export const toggleStatusBarVisibility = () => {
 const SlskdnStatusBar = () => {
   const [stats, setStats] = useState({
     activeSwarms: 0,
+    dhtNodes: 0,
+    discoveredPeers: 0,
     hashCount: 0,
+    isBeacon: null, // null = unknown, true = beacon, false = not beacon
     isSyncing: false,
     karma: 0,
     meshPeers: 0,
     seqId: 0,
+    verifiedBeacons: 0,
   });
   const [visible, setVisible] = useState(() => isStatusBarVisible());
 
@@ -69,17 +73,23 @@ const SlskdnStatusBar = () => {
         const mesh = data?.mesh || {};
         const backfill = data?.backfill || {};
         const swarmJobs = data?.swarmJobs || [];
+        const dht = data?.dht || {};
 
-        setStats({
+        setStats((prev) => ({
+          ...prev,
           activeSwarms: Array.isArray(swarmJobs) ? swarmJobs.length : 0,
           backfillActive: Boolean(backfill.isActive),
+          dhtNodes: Number(dht.dhtNodeCount) || prev.dhtNodes,
+          discoveredPeers: Number(dht.discoveredPeerCount) || prev.discoveredPeers,
           hashCount: Number(hashDatabase.totalEntries) || 0,
+          isBeacon: dht.isBeaconCapable !== undefined ? Boolean(dht.isBeaconCapable) : prev.isBeacon,
           isSyncing: Boolean(mesh.isSyncing),
           karma: Number(data?.karma?.total) || storedKarma,
           meshPeers: Number(mesh.connectedPeerCount) || 0,
           seqId:
             Number(hashDatabase.currentSeqId) || Number(mesh.localSeqId) || 0,
-        });
+          verifiedBeacons: Number(dht.verifiedBeaconCount) || prev.verifiedBeacons,
+        }));
       } catch (error) {
         // Silently handle errors - status bar is non-critical
         console.debug(
@@ -107,7 +117,10 @@ const SlskdnStatusBar = () => {
   const {
     activeSwarms,
     backfillActive,
+    dhtNodes,
+    discoveredPeers,
     hashCount,
+    isBeacon,
     isSyncing,
     karma,
     meshPeers,
@@ -117,6 +130,29 @@ const SlskdnStatusBar = () => {
   return (
     <div className="slskdn-status-bar">
       <div className="slskdn-status-items">
+        <Link
+          className="slskdn-status-item"
+          title={
+            isBeacon === null
+              ? 'Checking beacon status...'
+              : isBeacon
+                ? `📡 BEACON! Broadcasting to ${dhtNodes} DHT nodes. Found ${discoveredPeers} peers.`
+                : `Not beacon-capable (behind NAT). Found ${discoveredPeers} peers.`
+          }
+          to={`${urlBase}/system/network`}
+        >
+          <Icon
+            color={isBeacon ? 'green' : 'grey'}
+            name="rss"
+            size="small"
+          />
+          <span className={isBeacon ? 'active' : ''}>
+            {discoveredPeers} dht
+          </span>
+        </Link>
+
+        <span className="slskdn-status-divider">│</span>
+
         <Link
           className="slskdn-status-item"
           title="Connected slskdn mesh peers"

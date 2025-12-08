@@ -128,4 +128,4 @@ jobs:
           
           SRPM=$(find ~/rpmbuild/SRPMS -name "*.src.rpm" | head -1)
           echo "Uploading SRPM to COPR: $SRPM"
-          copr-cli build slskdN "$SRPM" --nowait
+          copr-cli build slskdn/slskdn "$SRPM" --nowait

@@ -179,7 +179,8 @@ jobs:
             echo "pkgname = ${pkgname}"
           }
           
-          # Clone and update AUR repo (slskdN-bin)
+          # Clone and update AUR repo (slskdn-bin)
+          rm -rf aur-repo aur-repo-src
           git clone ssh://aur@aur.archlinux.org/slskdn-bin.git aur-repo || mkdir aur-repo
           cd aur-repo
           cp ../packaging/aur/PKGBUILD-bin PKGBUILD

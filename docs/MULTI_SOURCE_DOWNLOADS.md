@@ -946,9 +946,20 @@ No dedicated infrastructure required. Every client contributes equally to networ
 
 ---
 
-## CONNECT_ASSIST: Relay Bridge for NAT'd Users
+## CONNECT_ASSIST: Signaling-First NAT Traversal
 
-A significant portion of Soulseek users cannot receive incoming connections due to NAT, firewalls, or ISP restrictions. These "second-class" users can only download from peers who happen to connect to them first. This section proposes infrastructure where `slskdn` nodes with open ports can volunteer as relay bridges, enabling transfers that would otherwise fail.
+A significant portion of Soulseek users cannot receive incoming connections due to NAT, firewalls, or ISP restrictions. These "second-class" users can only download from peers who happen to connect to them first. This section proposes a **signaling-first** architecture where mesh nodes help establish direct peer-to-peer connections without relaying any file data.
+
+### The Core Insight: Signaling vs. Relay
+
+Most NAT traversal solutions jump straight to relaying data through intermediaries. This is expensive, doesn't scale, and raises privacy concerns. The key insight is that **90%+ of "impossible" connections can be established with pure signaling**—exchanging ~200 bytes of address information and timing coordination—after which the transfer proceeds directly between peers.
+
+| Role | What It Does | Bandwidth Cost | Success Rate |
+|------|--------------|----------------|--------------|
+| **Signaling** | Exchange addresses, coordinate timing | ~200 bytes | 60-95% of NAT cases |
+| **Full Relay** | Forward actual file data | 100% of transfer | Last resort only |
+
+A volunteer serving 1000 connection assists per day via signaling uses less bandwidth than relaying a single 100MB file.
 
 ### The Problem
 
@@ -963,13 +974,36 @@ Result: Transfer impossible. Both users frustrated.
 
 The Soulseek server attempts to broker this with "pierce firewall" messages, but it's unreliable and only works if both users are connected to the server at the right moment.
 
-### Solution: Mesh-Assisted Connection Establishment
+### Solution: Graduated Connection Strategies
 
-Three graduated strategies, attempted in order:
+Four strategies attempted in order, with signaling-only methods exhausted before any data relay:
 
-#### Strategy 1: Third-Party Connection Trigger
+```
+┌─────────────────────────────────────────────────────────────┐
+│  STRATEGY HIERARCHY (signaling-first)                       │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│  1. Direct connection      → Both peers try normally        │
+│         ↓ fails                                             │
+│  2. Connection trigger     → Tell open peer to call back    │
+│         ↓ fails               (SIGNALING ONLY: ~100 bytes) │
+│  3. Coordinated hole punch → Exchange addresses + timing    │
+│         ↓ fails               (SIGNALING ONLY: ~200 bytes) │
+│  4. Full relay             → Last resort, actual data flow  │
+│                               (FULL BANDWIDTH COST)         │
+│                                                             │
+│  Steps 1-3 require ZERO data relay.                         │
+│  Step 4 is rarely needed.                                   │
+└─────────────────────────────────────────────────────────────┘
+```
 
-When User A can accept connections but cannot initiate (asymmetric NAT, corporate proxy):
+#### Strategy 1: Direct Connection (No Assist Needed)
+
+Both peers attempt normal connection. Works when at least one has an open port.
+
+#### Strategy 2: Connection Trigger (Signaling Only)
+
+When A can accept connections but cannot initiate (asymmetric NAT, corporate proxy, or A's outbound is blocked but inbound works):
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -978,44 +1012,61 @@ When User A can accept connections but cannot initiate (asymmetric NAT, corporat
 │                                                             │
 │   A ──────X──────→ B    (A's outbound blocked/filtered)     │
 │                                                             │
-│   A ────→ C ────→ B     C tells B "A wants to connect"      │
+│   A ────→ C ────→ B     C tells B: "A wants you to connect" │
+│           │             C tells B: "A's address is X.X.X.X" │
 │           ↓                                                  │
-│   A ←──────────── B     B connects TO A (A accepts inbound) │
+│   A ←──────────── B     B initiates connection TO A         │
+│                                                             │
+│   C's job is DONE. Transfer proceeds A ↔ B directly.       │
+│   C relayed ~100 bytes of signaling, zero file data.        │
 │                                                             │
 └─────────────────────────────────────────────────────────────┘
 ```
 
-Any mesh peer connected to B can forward the trigger. B's client initiates connection to A.
+**Trick for stubborn NATs:** A pre-sends a SYN to B (gets dropped by B's firewall, but creates a NAT mapping on A's side). Then when B connects back, the incoming connection matches A's NAT mapping and is allowed through. From A's perspective, B "happened to connect."
 
-#### Strategy 2: TCP Hole Punching Coordination
+#### Strategy 3: Coordinated Hole Punch (Signaling Only)
 
-When both users are behind NAT but have predictable port mapping:
+When both users are behind NAT, a coordinator facilitates simultaneous connection attempts:
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  Simultaneous TCP Open (Hole Punching)                      │
+│  Rendezvous / Address Exchange                              │
 ├─────────────────────────────────────────────────────────────┤
 │                                                             │
-│  C (coordinator) connected to both A and B                  │
+│   A ────outbound────→ C ←────outbound──── B                 │
+│                       │                                      │
+│   C now knows:        │                                      │
+│     A's public = 1.2.3.4:54321  (from A's connection)       │
+│     B's public = 5.6.7.8:12345  (from B's connection)       │
 │                                                             │
-│  1. C learns A and B's public IP:port (from their NAT)      │
+│   C → A: "B is at 5.6.7.8:12345"                            │
+│   C → B: "A is at 1.2.3.4:54321"                            │
+│   C → both: "Send SYN to each other at T+100ms"             │
 │                                                             │
-│  2. C → A: "Send SYN to B at exactly T+100ms"               │
-│     C → B: "Send SYN to A at exactly T+100ms"               │
+└─────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────┐
+│  Simultaneous TCP Open (Hole Punch)                         │
+├─────────────────────────────────────────────────────────────┤
 │                                                             │
-│  3. Both send SYN at same moment:                           │
-│     A ──SYN──→    ←──SYN── B                                │
+│   At synchronized moment:                                   │
+│     A ──SYN──→          ←──SYN── B                          │
 │                                                             │
-│  4. NATs see outgoing, create mapping                       │
-│     Incoming SYN matches mapping → connection established   │
+│   Both NATs see outgoing packet → create mapping            │
+│   Incoming SYN from other side matches mapping              │
+│   Direct TCP connection established!                         │
+│                                                             │
+│   C's job is DONE. Transfer proceeds A ↔ B directly.       │
+│   C relayed ~200 bytes of signaling, zero file data.        │
 │                                                             │
 └─────────────────────────────────────────────────────────────┘
 ```
 
-Success rates vary by NAT type:
+This is exactly how WebRTC's ICE/STUN works. Success rates by NAT type:
 
-| NAT Type | Success Rate |
-|----------|--------------|
+| NAT Type | Hole Punch Success |
+|----------|-------------------|
 | Full Cone | ~95% |
 | Restricted Cone | ~80% |
 | Port Restricted | ~60% |
@@ -1023,113 +1074,136 @@ Success rates vary by NAT type:
 
 Even 60% success helps users who currently get 0%.
 
-#### Strategy 3: Volunteer Relay Network
+#### Strategy 4: Full Data Relay (Last Resort)
 
-When direct connection is impossible:
+Only when signaling strategies fail—typically symmetric NAT on both sides, or extremely restrictive firewalls:
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  Relay Through Volunteer Peer                               │
+│  Full Relay (rare, expensive)                               │
 ├─────────────────────────────────────────────────────────────┤
 │                                                             │
-│   A (NAT) ←────→ C (open, volunteer relay) ←────→ B (NAT)   │
+│   A (NAT) ←────→ C (volunteer relay) ←────→ B (NAT)         │
 │                                                             │
 │   A connects OUT to C                                       │
 │   B connects OUT to C                                       │
 │   C bridges the streams                                     │
 │                                                             │
 │   File data: B → C → A                                      │
+│   C pays full bandwidth cost.                               │
 │                                                             │
 └─────────────────────────────────────────────────────────────┘
 ```
 
-Relay volunteers are `slskdn` users with open ports who opt in to help the network.
+This should be needed for <10% of connections that fail all signaling methods.
+
+### Why This Architecture Scales
+
+| Scenario | Old Approach (Relay Everything) | Signaling-First |
+|----------|--------------------------------|-----------------|
+| 1000 assists/day | 1000 × avg file size = massive bandwidth | 1000 × 200 bytes = 200KB total |
+| Volunteer requirements | Few volunteers, high cost | Many volunteers, negligible cost |
+| Privacy | Relay sees all data | Relay sees only addresses |
+| Bottleneck | Relay bandwidth | None (direct transfers) |
 
 ### Wire Protocol
 
-#### Message Types
+#### Signaling Messages (Strategies 1-3)
 
 ```
 ASSIST_REQUEST
     requester: string      // Username requesting help
     target: string         // Username they want to reach
-    file_hash: string      // SHA256 of target file (optional)
     reason: string         // "cannot_connect" | "timeout" | "rejected"
 
 ASSIST_OFFER
     helper: string         // Username offering to help
-    method: string         // "trigger" | "hole_punch" | "relay"
+    methods: string[]      // ["trigger", "hole_punch", "relay"] in preference order
     capabilities:
-        relay_bandwidth: int   // Max bytes willing to relay per transfer
         can_coordinate: bool   // Can perform hole punch timing
+        can_relay: bool        // Willing to relay if signaling fails
+        relay_limit: int       // Max bytes willing to relay (if can_relay)
 
-HOLE_PUNCH_INIT
-    coordinator: string
+ADDRESS_INFO
+    username: string
+    public_addr: string    // IP:port as seen from outside NAT
+    nat_type: string       // "full_cone" | "restricted" | "port_restricted" | "symmetric" | "unknown"
+
+HOLE_PUNCH_COORDINATE
     peer_a: { user: string, public_addr: string }
     peer_b: { user: string, public_addr: string }
-    sync_time: int         // Unix milliseconds for synchronized SYN
+    sync_time: int         // Unix milliseconds - both send SYN at this moment
 
+CONNECTION_TRIGGER
+    target: string         // Username to notify
+    requester_addr: string // Where requester can receive connections
+    pre_syn_sent: bool     // Whether requester pre-sent SYN to create NAT mapping
+```
+
+#### Relay Messages (Strategy 4 Only)
+
+```
 RELAY_OFFER
     relay: string          // Relay node username
     session_id: string     // UUID for this relay session
     relay_addr: string     // IP:port to connect to
     expires: int           // Seconds until offer expires
+    max_bytes: int         // Maximum bytes this session will relay
 
 RELAY_CONNECT
     session_id: string     // From RELAY_OFFER
-    peer: string           // Which peer is connecting ("A" or "B")
-    // Both peers connect with same session_id; relay bridges when both present
+    role: string           // "sender" | "receiver"
 ```
 
 ### UserInfo Advertisement
 
-Relay capability is advertised in the standard capability tag:
+Capabilities advertised in standard tag format:
 
 ```
 [SLSKDN:v1]
 [SLSKDN:MESH:YES]
-[SLSKDN:RELAY:YES:100MB]       # Willing to relay up to 100MB per transfer
-[SLSKDN:HOLE_PUNCH:YES]         # Can participate in hole punch coordination
-[SLSKDN:ASSIST:TRIGGER]         # Can forward connection triggers
+[SLSKDN:ASSIST:SIGNAL]         # Will help with signaling/coordination
+[SLSKDN:ASSIST:RELAY:100MB]    # OPTIONAL: Also willing to relay up to 100MB
+[SLSKDN:NAT:FULL_CONE]         # Self-detected NAT type (helps matchmaking)
 ```
 
 Fields:
-- `RELAY:YES:<limit>` - Opt-in to relay duty with per-transfer bandwidth cap
-- `HOLE_PUNCH:YES` - Has predictable NAT, can participate in coordinated hole punching
-- `ASSIST:TRIGGER` - Will forward connection trigger messages
+- `ASSIST:SIGNAL` - Core capability: will forward triggers and coordinate hole punches
+- `ASSIST:RELAY:<limit>` - Optional: will also relay data if signaling fails
+- `NAT:<type>` - Self-reported NAT type for hole punch success prediction
+
+Most volunteers should offer `SIGNAL` only. Relay is opt-in for those with bandwidth to spare.
 
 ### Incentive Model
 
-Karma-based reputation system encourages participation:
+Karma reflects actual contribution:
 
-| Action | Karma Earned |
-|--------|--------------|
-| Relay 1MB for another user | +1 |
-| Successful hole punch coordination | +5 |
-| Forwarding connection trigger | +0.5 |
+| Action | Karma Earned | Rationale |
+|--------|--------------|-----------|
+| Successful signaling assist | +1 | Low cost, high value |
+| Hole punch coordination | +2 | Slightly more complex |
+| Relay 10MB for another user | +1 | High cost, reserved for when needed |
 
 | Benefit | Karma Required |
 |---------|----------------|
 | Priority in swarm chunk allocation | 10+ |
-| Relay service from high-karma peers | 5+ |
-| Extended mesh sync (larger delta batches) | 0 (free) |
+| Relay service from volunteers | 5+ |
+| Extended mesh sync batches | 0 (free) |
 
-Peers with negative karma (failed relay promises, abuse) receive degraded service.
+Signaling is cheap enough that karma requirements are easily met by participating.
 
-### Privacy Considerations
+### Privacy Analysis
 
-#### What the Relay Sees
+| Strategy | What Helper Sees | Privacy Impact |
+|----------|------------------|----------------|
+| Connection Trigger | "A wants to reach B" | Minimal - same as seeing search results |
+| Hole Punch | A and B's public IP:port | Moderate - but no content visible |
+| Full Relay | All transferred bytes | High - but opt-in and rate-limited |
 
-- Which users are transferring
-- File size and hash
-- Raw bytes (unless E2E encrypted)
-
-#### Mitigations
-
-1. **E2E encryption layer**: A and B negotiate key via mesh; relay only sees ciphertext
-2. **Multi-hop relay**: Route through 2-3 relays (Tor-like, but lighter weight)
-3. **Trust tiers**: Only relay through peers with successful transfer history
-4. **Session limits**: Max 100MB per session, max 10 sessions per day
+Signaling strategies (1-3) reveal only connection intent, not content. Full relay (4) is:
+- Opt-in for the relay volunteer
+- Rate-limited per session
+- Optionally E2E encrypted (A and B negotiate key, relay sees ciphertext)
 
 ### Complete Assist Flow
 
@@ -1143,51 +1217,208 @@ Peers with negative karma (failed relay promises, abuse) receive degraded servic
 ┌─────────────────────────────────────────────────────────────┐
 │ 2. HELPER DISCOVERY                                         │
 │    Mesh propagates request                                  │
-│    C (connected to both A and B) responds with ASSIST_OFFER │
+│    C responds with ASSIST_OFFER { methods: [...] }          │
 └─────────────────────────────────────────────────────────────┘
                               ↓
 ┌─────────────────────────────────────────────────────────────┐
-│ 3. STRATEGY SELECTION (in order)                            │
+│ 3. SIGNALING ATTEMPTS (in order, all zero-data-cost)        │
 │                                                             │
-│    a) Connection trigger? C tells B to connect to A         │
-│       → If A can accept inbound, done                       │
+│    a) Connection trigger                                    │
+│       A pre-sends SYN to B (creates NAT mapping)            │
+│       C tells B: "Connect to A at X.X.X.X:Y"                │
+│       B connects → SUCCESS? Done. Transfer directly.        │
 │                                                             │
-│    b) Hole punch? C coordinates simultaneous SYN            │
-│       → If NAT allows, direct connection established        │
+│    b) Coordinated hole punch                                │
+│       C collects A and B's public addresses                 │
+│       C sends HOLE_PUNCH_COORDINATE with sync time          │
+│       A and B both send SYN at T → SUCCESS? Done.           │
 │                                                             │
-│    c) Relay? C provides RELAY_OFFER                         │
-│       → Both A and B connect to C, C bridges streams        │
 └─────────────────────────────────────────────────────────────┘
                               ↓
 ┌─────────────────────────────────────────────────────────────┐
-│ 4. TRANSFER                                                 │
-│    File flows: B → [relay if needed] → A                    │
-│    Karma updated for all participants                       │
+│ 4. RELAY FALLBACK (only if all signaling failed)            │
+│                                                             │
+│    C (if ASSIST:RELAY capable) sends RELAY_OFFER            │
+│    A and B both connect to C's relay port                   │
+│    C bridges streams until transfer complete                │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────┐
+│ 5. TRANSFER COMPLETE                                        │
+│    Karma awarded based on method used                       │
+│    NAT type info cached for future predictions              │
 └─────────────────────────────────────────────────────────────┘
 ```
 
-### Impact Assessment
+### Expected Success Rates
 
-| User Scenario | Current Soulseek | With CONNECT_ASSIST |
-|---------------|------------------|---------------------|
-| Both NAT, neither port forwards | Transfer impossible | 60-80% via hole punch, 100% via relay |
-| One NAT, one open, but can't reach | Usually fails | Trigger reverse connection |
-| Behind corporate firewall | Very limited | Outbound to relay works |
-| Mobile/CGNAT users | Second-class citizens | Full participation via relay |
+Based on real-world NAT distribution:
 
-This infrastructure improves the health of the entire Soulseek network by enabling transfers that currently fail silently.
+| Connection Scenario | Direct | + Trigger | + Hole Punch | + Relay |
+|--------------------|--------|-----------|--------------|---------|
+| A open, B open | 100% | - | - | - |
+| A NAT, B open | 50% | 95% | - | - |
+| A open, B NAT | 50% | 95% | - | - |
+| A NAT (cone), B NAT (cone) | 0% | 30% | 85% | 100% |
+| A NAT (symmetric), B NAT (symmetric) | 0% | 0% | 10% | 100% |
+
+Most Soulseek users have cone-type NATs. The signaling-first approach should resolve 80-90% of currently-failing transfers without any data relay.
 
 ### Implementation Phases
 
-| Phase | Scope | Dependencies |
-|-------|-------|--------------|
-| 1 | Connection trigger forwarding | Mesh sync (Phase 3) |
-| 2 | Hole punch coordination | NAT type detection, timing sync |
-| 3 | Volunteer relay network | Karma system, session management |
-| 4 | E2E encryption layer | Key exchange protocol |
-| 5 | Multi-hop routing | Relay chaining, path selection |
+| Phase | Scope | Bandwidth Cost | Dependencies |
+|-------|-------|----------------|--------------|
+| 1 | Connection triggers | Zero | Mesh sync |
+| 2 | Hole punch coordination | Zero | NAT type detection, timing sync |
+| 3 | Volunteer relay (opt-in) | Per-transfer | Karma system, session limits |
+| 4 | E2E encryption for relay | Zero | Key exchange |
 
-Phase 1 provides immediate value with minimal complexity. Phases 2-5 add progressive capability for increasingly hostile network environments.
+Phases 1-2 provide massive value at zero bandwidth cost. Phase 3 catches the remaining edge cases. Phase 4 adds privacy for relay transfers.
+
+### Why Not Just Use STUN/TURN?
+
+We could integrate standard STUN/TURN infrastructure, but:
+
+1. **STUN servers are external dependencies** - Our mesh is self-hosted
+2. **TURN servers are expensive** - Someone has to pay for relay bandwidth
+3. **We already have the mesh** - Why add another overlay?
+
+The signaling-first approach achieves STUN/ICE-equivalent functionality using infrastructure we're already building for hash sync.
+
+### Interoperability with Legacy Clients
+
+A common question: can we help non-slskdn clients connect to each other?
+
+| Connection Scenario | Support Level | Mechanism |
+|--------------------|---------------|-----------|
+| **slskdn ↔ slskdn** | Full | Complete signaling protocol, hole punch, relay |
+| **slskdn ↔ legacy** | Partial | Our side prepares NAT + standard pierce firewall |
+| **legacy ↔ legacy** | None | Cannot inject into their connection flow |
+
+**Why the limitation exists:**
+
+Connection triggers and hole punch coordination require the receiving client to:
+1. Understand our mesh signaling messages
+2. Act on timing coordination
+3. Participate in the protocol
+
+Legacy clients (Nicotine+, SoulseekQt, etc.) don't speak our extended protocol. We can't make them do things they weren't programmed to do.
+
+**What we CAN do for slskdn → legacy transfers:**
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  slskdn user A wants to download from legacy user B         │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│  1. A pre-sends SYN to B (creates NAT mapping on A's side)  │
+│  2. A requests standard "pierce firewall" from Soulseek     │
+│  3. Server sends PierceFirewall to B (legacy understands)   │
+│  4. B connects back to A                                    │
+│  5. A's pre-created NAT mapping accepts the connection!     │
+│                                                             │
+│  Result: Higher success rate than pure legacy behavior.     │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
+```
+
+This is a unilateral improvement—slskdn users benefit even when the other side is legacy.
+
+**For legacy ↔ legacy:** We simply cannot help. Both clients would need to run our code to participate in signaling. This is a fundamental limitation, not a design choice.
+
+**The long game:** As slskdn adoption grows, the percentage of connections that can use full signaling increases. Early adopters benefit immediately when connecting to each other, and partially when connecting to legacy clients.
+
+---
+
+## Project Vision & Roadmap
+
+### Philosophy
+
+slskdn takes the position that **good features belong in the client, not in external scripts**. The upstream slskd project intentionally stays minimal, directing users to implement advanced features via the API. slskdn takes the opposite approach: if a feature improves the user experience and can be implemented responsibly, it should be built-in.
+
+This experimental branch pushes that philosophy further into **protocol enhancement territory**—not breaking compatibility, but extending capability for clients that opt in.
+
+### Core Principles
+
+1. **Never break legacy compatibility** - Standard Soulseek clients must remain fully functional
+2. **Graceful degradation** - Extended features work when available, fall back silently when not
+3. **Network citizenship** - No feature should abuse the network or burden other users
+4. **Privacy by default** - Signaling over relay, encryption where data flows through third parties
+5. **Decentralization** - No dedicated infrastructure required; every client contributes equally
+
+### Feature Roadmap
+
+#### Tier 1: Stable (Ready for Main Branch)
+
+| Feature | Status | Description |
+|---------|--------|-------------|
+| Auto-replace stuck downloads | ✅ Shipped | Automatic search and replacement for failed transfers |
+| Wishlist/background search | ✅ Shipped | Persistent searches that run automatically |
+| Smart source ranking | ✅ Shipped | Intelligent sorting by speed, queue, history |
+| User notes & ratings | ✅ Shipped | Persistent annotations on users |
+| Multi-destination downloads | ✅ Shipped | Route downloads to different folders |
+| Ntfy/Pushover notifications | ✅ Shipped | Mobile push for messages and mentions |
+
+#### Tier 2: Experimental (This Branch)
+
+| Feature | Status | Description |
+|---------|--------|-------------|
+| Multi-source swarm downloads | ✅ Working | Download chunks from multiple peers simultaneously |
+| Source discovery service | ✅ Working | Background indexing of available sources |
+| Content verification (SHA256) | ✅ Working | Verify chunk integrity before assembly |
+| Partial download tracking | ✅ Working | Remember which peers support `startOffset` |
+
+#### Tier 3: Protocol Extensions (In Development)
+
+| Feature | Status | Description |
+|---------|--------|-------------|
+| Capability advertisement | ✅ Complete | UserInfo tags for feature discovery |
+| Local hash database | ✅ Complete | SQLite store for verified FLAC hashes |
+| Epidemic mesh sync | ✅ Complete | Gossip-based hash exchange between slskdn nodes |
+| BitTorrent DHT rendezvous | ✅ Complete | Decentralized peer discovery for mesh bootstrap |
+| Backfill scheduler | ✅ Complete | Conservative header probing for long-tail content |
+
+#### Tier 4: Network Enhancement (Proposed)
+
+| Feature | Status | Description |
+|---------|--------|-------------|
+| CONNECT_ASSIST signaling | 📋 Designed | Zero-bandwidth connection brokering |
+| Connection triggers | 📋 Designed | Tell peers to initiate reverse connections |
+| Hole punch coordination | 📋 Designed | Synchronized NAT traversal |
+| Volunteer relay network | 📋 Designed | Last-resort data relay for symmetric NAT |
+| Karma/reputation system | 📋 Designed | Incentivize network contribution |
+
+#### Tier 5: Future Possibilities
+
+| Feature | Status | Description |
+|---------|--------|-------------|
+| E2E encryption for relay | 💭 Concept | Privacy layer when relay is required |
+| Multi-hop relay routing | 💭 Concept | Tor-lite for sensitive transfers |
+| Cross-client capability negotiation | 💭 Concept | Standardized extension discovery |
+| FLAC fingerprint matching | 💭 Concept | Content-based deduplication beyond size matching |
+
+### Success Metrics
+
+How we'll know the experimental features are working:
+
+| Metric | Target | Measurement |
+|--------|--------|-------------|
+| Swarm download success rate | >90% | Completed multi-source transfers / attempts |
+| Hash cache hit rate | >50% | Lookups resolved from local DB or mesh |
+| Mesh peer count | >10 per node | Average connected mesh neighbors |
+| Signaling success rate | >80% | Connections established without relay |
+| Network abuse reports | 0 | Complaints from other users or server operators |
+
+### Contribution to Broader Ecosystem
+
+Features that prove stable and valuable may be:
+
+1. **Proposed as Soulseek protocol extensions** - With buy-in from server operators
+2. **Submitted as PRs to upstream slskd** - For features that fit their philosophy
+3. **Documented for other client implementations** - Nicotine+, SoulseekQt, etc.
+
+The goal is not to fragment the network, but to prove out ideas that could benefit everyone. slskdn serves as a **proving ground** for features that are too experimental for conservative clients but too valuable to ignore.
 
 ---
 

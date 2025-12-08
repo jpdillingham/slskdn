@@ -1,5 +1,5 @@
-// <copyright file="ContentSafety.cs" company="slskd Team">
-//     Copyright (c) slskd Team. All rights reserved.
+// <copyright file="ContentSafety.cs" company="slskdn Team">
+//     Copyright (c) slskdn Team. All rights reserved.
 //     Licensed under the AGPL-3.0 license. See LICENSE file in the project root for full license information.
 // </copyright>
 

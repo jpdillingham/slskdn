@@ -7,6 +7,7 @@ import Info from './Info';
 import Logs from './Logs';
 import Network from './Network';
 import Options from './Options';
+import Security from './Security';
 import Shares from './Shares';
 import React from 'react';
 import { Redirect, useHistory, useRouteMatch } from 'react-router-dom';
@@ -65,6 +66,19 @@ const System = ({ options = {}, state = {}, theme }) => {
         </Tab.Pane>
       ),
       route: 'network',
+    },
+    {
+      menuItem: {
+        content: 'Security',
+        icon: 'shield alternate',
+        key: 'security',
+      },
+      render: () => (
+        <Tab.Pane>
+          <Security />
+        </Tab.Pane>
+      ),
+      route: 'security',
     },
     {
       menuItem: {

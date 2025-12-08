@@ -18,6 +18,7 @@ import {
   toggleStatusBarVisibility,
 } from './Shared';
 import ErrorSegment from './Shared/ErrorSegment';
+import Footer from './Shared/Footer';
 import System from './System/System';
 import Transfers from './Transfers/Transfers';
 import Users from './Users/Users';
@@ -711,6 +712,7 @@ class App extends Component {
           position="bottom-center"
           rtl={false}
         />
+        <Footer />
       </>
     );
   }

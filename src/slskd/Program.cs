@@ -23,8 +23,6 @@ namespace slskd
     using System.Collections.Generic;
     using System.ComponentModel;
     using System.ComponentModel.DataAnnotations;
-    using System.Diagnostics;
-
     using System.IO;
     using System.Linq;
     using System.Net;
@@ -70,11 +68,14 @@ namespace slskd
     using slskd.Search;
     using slskd.Search.API;
     using slskd.Shares;
+    using slskd.Telemetry;
     using slskd.Transfers;
     using slskd.Transfers.Downloads;
     using slskd.Transfers.Uploads;
     using slskd.Users;
+    using slskd.Common.Security;
     using slskd.Validation;
+    using slskd.Common.Security;
     using Soulseek;
     using Utility.CommandLine;
     using Utility.EnvironmentVariables;
@@ -89,6 +90,11 @@ namespace slskd
         ///     The name of the application.
         /// </summary>
         public static readonly string AppName = "slskd";
+
+        /// <summary>
+        ///     The DateTime of the 'genesis' of the application (the initial commit).
+        /// </summary>
+        public static readonly DateTime GenesisDateTime = new(2020, 12, 30, 6, 22, 0, DateTimeKind.Utc);
 
         /// <summary>
         ///     The name of the local share host.
@@ -639,8 +645,9 @@ namespace slskd
             services.AddSingleton<EventService>();
             services.AddSingleton<EventBus>();
 
-            services.AddSingleton<TelemetryService>();
             services.AddSingleton<PrometheusService>();
+            services.AddSingleton<ReportsService>();
+            services.AddSingleton<TelemetryService>();
 
             services.AddSingleton<ScriptService>();
             services.AddSingleton<WebhookService>();
@@ -708,67 +715,6 @@ namespace slskd
             services.AddSingleton<Transfers.AutoReplace.AutoReplaceBackgroundService>();
             services.AddHostedService(provider => provider.GetRequiredService<Transfers.AutoReplace.AutoReplaceBackgroundService>());
 
-            // Multi-source download services
-            services.AddSingleton<Transfers.MultiSource.IContentVerificationService, Transfers.MultiSource.ContentVerificationService>();
-            services.AddSingleton<Transfers.MultiSource.IMultiSourceDownloadService, Transfers.MultiSource.MultiSourceDownloadService>();
-            services.AddSingleton<Transfers.MultiSource.Discovery.ISourceDiscoveryService, Transfers.MultiSource.Discovery.SourceDiscoveryService>();
-            services.AddHostedService(provider => (Transfers.MultiSource.Discovery.SourceDiscoveryService)provider.GetRequiredService<Transfers.MultiSource.Discovery.ISourceDiscoveryService>());
-
-            // Capability discovery service (Phase 1)
-            services.AddSingleton<Capabilities.ICapabilityService, Capabilities.CapabilityService>();
-
-            // Hash database service (Phase 2)
-            services.AddSingleton<HashDb.IHashDbService>(sp => new HashDb.HashDbService(Program.AppDirectory));
-
-            // Mesh sync service (Phase 3)
-            services.AddSingleton<Mesh.IMeshSyncService, Mesh.MeshSyncService>();
-
-            // Backfill scheduler service (Phase 4)
-            services.AddSingleton<Backfill.IBackfillSchedulerService, Backfill.BackfillSchedulerService>();
-            services.AddHostedService(provider => (Backfill.BackfillSchedulerService)provider.GetRequiredService<Backfill.IBackfillSchedulerService>());
-
-            // DHT Rendezvous Layer (Phase 6)
-            services.AddSingleton<DhtRendezvous.DhtRendezvousOptions>(sp =>
-            {
-                return new DhtRendezvous.DhtRendezvousOptions
-                {
-                    Enabled = true,
-                    OverlayPort = 50305,
-                    AnnounceIntervalSeconds = 900,
-                    DiscoveryIntervalSeconds = 600,
-                    MinNeighbors = 3,
-                    EnableUpnp = false,         // Opt-in only - UPnP has security issues
-                    EnableStun = true,          // Generally safe - just detects public IP
-                    EnableUsernameVerification = false, // Adds latency
-                    EnablePeerDiversity = true, // Anti-eclipse protection
-                };
-            });
-            
-            // Phase 6.5: NAT detection, peer verification, diversity, small-world
-            services.AddSingleton<DhtRendezvous.NatDetectionService>();
-            services.AddSingleton<DhtRendezvous.Security.PeerVerificationService>();
-            services.AddSingleton<DhtRendezvous.Security.PeerDiversityChecker>();
-            services.AddSingleton<Capabilities.CapabilityFileService>();
-            services.AddSingleton<Mesh.SmallWorldNeighborService>();
-            services.AddHostedService<DhtRendezvous.DhtPeerGreetingService>();
-            services.AddSingleton<DhtRendezvous.Security.OverlayRateLimiter>();
-            services.AddSingleton<DhtRendezvous.Security.OverlayBlocklist>();
-            services.AddSingleton<DhtRendezvous.Security.CertificateManager>(sp =>
-            {
-                var logger = sp.GetRequiredService<ILogger<DhtRendezvous.Security.CertificateManager>>();
-                return new DhtRendezvous.Security.CertificateManager(logger, Program.AppDirectory);
-            });
-            services.AddSingleton<DhtRendezvous.Security.CertificatePinStore>(sp =>
-            {
-                var logger = sp.GetRequiredService<ILogger<DhtRendezvous.Security.CertificatePinStore>>();
-                return new DhtRendezvous.Security.CertificatePinStore(logger, Program.AppDirectory);
-            });
-            services.AddSingleton<DhtRendezvous.MeshNeighborRegistry>();
-            services.AddSingleton<DhtRendezvous.IMeshOverlayServer, DhtRendezvous.MeshOverlayServer>();
-            services.AddSingleton<DhtRendezvous.IMeshOverlayConnector, DhtRendezvous.MeshOverlayConnector>();
-            services.AddSingleton<DhtRendezvous.IDhtRendezvousService, DhtRendezvous.DhtRendezvousService>();
-            services.AddHostedService(provider => (DhtRendezvous.DhtRendezvousService)provider.GetRequiredService<DhtRendezvous.IDhtRendezvousService>());
-
             services.AddSingleton<IRelayService, RelayService>();
 
             services.AddSingleton<IFTPClientFactory, FTPClientFactory>();
@@ -794,6 +740,9 @@ namespace slskd
             }
 
             services.AddSingleton<Users.Notes.IUserNoteService, Users.Notes.UserNoteService>();
+
+            // Security services (zero-trust hardening)
+            services.AddSlskdnSecurity(Configuration);
 
             return services;
         }
@@ -989,7 +938,8 @@ namespace slskd
                     options.PayloadSerializerOptions.Converters.Add(new JsonStringEnumConverter());
                 });
 
-            services.AddHealthChecks();
+            services.AddHealthChecks()
+                .AddSecurityHealthCheck();
 
             services.AddApiVersioning(options =>
                 {
@@ -1022,6 +972,9 @@ namespace slskd
                             Url = new Uri("https://github.com/slskd/slskd/blob/master/LICENSE"),
                         },
                     });
+
+                    // allow endpoints marked with multiple content types in [Produces] to generate properly
+                    options.OperationFilter<ContentNegotiationOperationFilter>();
 
                     if (IOFile.Exists(XmlDocumentationFile))
                     {
@@ -1093,6 +1046,9 @@ namespace slskd
             {
                 app.UseSerilogRequestLogging();
             }
+
+            // Security middleware (rate limiting, violation tracking, etc.)
+            app.UseSlskdnSecurity();
 
             app.UseAuthentication();
             app.UseRouting();

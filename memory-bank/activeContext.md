@@ -5,6 +5,14 @@
 
 ---
 
+## 🚨 Before Ending Your Session
+
+**Did you fix any bugs? Document them in `adr-0001-known-gotchas.md` NOW.**
+
+This is the #1 most important thing to do before ending a session. Future AI agents (and humans) will thank you.
+
+---
+
 ## Current Session
 
 - **Current Task**: None active

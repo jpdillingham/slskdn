@@ -703,8 +703,8 @@ namespace slskd
 
             // DhtRendezvous services (BitTorrent DHT peer discovery)
             services.AddSingleton(OptionsAtStartup.DhtRendezvous);
-            services.AddSingleton<CertificateManager>();
-            services.AddSingleton<CertificatePinStore>();
+            services.AddSingleton<CertificateManager>(sp => new CertificateManager(sp.GetRequiredService<ILogger<CertificateManager>>(), AppDirectory));
+            services.AddSingleton<CertificatePinStore>(sp => new CertificatePinStore(sp.GetRequiredService<ILogger<CertificatePinStore>>(), AppDirectory));
             services.AddSingleton<OverlayRateLimiter>();
             services.AddSingleton<OverlayBlocklist>();
             services.AddSingleton<MeshNeighborRegistry>();

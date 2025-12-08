@@ -152,7 +152,7 @@ jobs:
       - name: Build .rpm Package
         run: |
           cd ~/rpmbuild
-          rpmbuild -bb SPECS/slskdN.spec
+          rpmbuild -bb SPECS/slskdn.spec
 
       - name: Find RPM
         id: find_rpm

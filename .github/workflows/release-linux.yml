@@ -180,7 +180,7 @@ jobs:
           }
           
           # Clone and update AUR repo (slskdN-bin)
-          git clone ssh://aur@aur.archlinux.org/slskdN-bin.git aur-repo || mkdir aur-repo
+          git clone ssh://aur@aur.archlinux.org/slskdn-bin.git aur-repo || mkdir aur-repo
           cd aur-repo
           cp ../packaging/aur/PKGBUILD-bin PKGBUILD
           cp ../packaging/aur/slskd.service .
@@ -194,7 +194,7 @@ jobs:
           cd ..
           
           # Clone and update AUR repo (slskdN source)
-          git clone ssh://aur@aur.archlinux.org/slskdN.git aur-repo-src || mkdir aur-repo-src
+          git clone ssh://aur@aur.archlinux.org/slskdn.git aur-repo-src || mkdir aur-repo-src
           cd aur-repo-src
           cp ../packaging/aur/PKGBUILD .
           cp ../packaging/aur/slskd.service .

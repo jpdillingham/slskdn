@@ -148,6 +148,11 @@ jobs:
             # Fedora/RHEL (COPR)
             sudo dnf copr enable slskdn/slskdn-dev
             sudo dnf install slskdn-dev
+            
+            # Ubuntu/Debian (PPA)
+            sudo add-apt-repository ppa:keefshape/slskdn
+            sudo apt update
+            sudo apt install slskdn-dev
             ```
           prerelease: true
           files: slskdn-dev-linux-x64.zip
@@ -342,10 +347,131 @@ jobs:
           # Upload to slskdn-dev project (separate from stable)
           copr-cli build slskdn-dev "$SRPM_PATH" --nowait
 
+  ppa:
+    name: Publish to PPA
+    runs-on: ubuntu-latest
+    needs: [build, release]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: experimental/multi-source-swarm
+
+      - name: Download from Dev Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release download dev \
+            --repo ${{ github.repository }} \
+            --pattern "slskdn-dev-linux-x64.zip"
+          unzip slskdn-dev-linux-x64.zip -d publish-linux-x64
+
+      - name: Install Build Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y devscripts debhelper dput gnupg build-essential
+
+      - name: Import GPG Key
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+        run: |
+          if [ -z "$GPG_PRIVATE_KEY" ]; then
+            echo "GPG_PRIVATE_KEY secret not set. Skipping PPA upload."
+            exit 0
+          fi
+          echo "$GPG_PRIVATE_KEY" | gpg --batch --import
+          # Trust the key
+          KEY_ID=$(gpg --list-keys --keyid-format long | grep -A1 "^pub" | tail -1 | awk '{print $1}')
+          echo "$KEY_ID:6:" | gpg --import-ownertrust
+
+      - name: Prepare Source Structure
+        run: |
+          VERSION="${{ needs.build.outputs.dev_version }}"
+          
+          # Create proper directory structure for debian packaging
+          mkdir -p slskdn-dev-${VERSION}/usr/lib/slskd
+          mkdir -p slskdn-dev-${VERSION}/lib/systemd/system
+          mkdir -p slskdn-dev-${VERSION}/etc/slskd
+          mkdir -p slskdn-dev-${VERSION}/usr/lib/sysusers.d
+          
+          # Copy binary files from our build
+          cp -r publish-linux-x64/* slskdn-dev-${VERSION}/usr/lib/slskd/
+          
+          # Copy service files from packaging
+          cp packaging/aur/slskd.service slskdn-dev-${VERSION}/lib/systemd/system/
+          cp packaging/aur/slskd.yml slskdn-dev-${VERSION}/etc/slskd/
+          cp packaging/aur/slskd.sysusers slskdn-dev-${VERSION}/usr/lib/sysusers.d/slskd.conf
+
+      - name: Prepare Source Package
+        run: |
+          VERSION="${{ needs.build.outputs.dev_version }}"
+          
+          # Create tarball for orig source
+          tar -czvf slskdn-dev_${VERSION}.orig.tar.gz slskdn-dev-${VERSION}
+          
+          # Copy and modify debian directory for -dev package
+          cp -r packaging/debian slskdn-dev-${VERSION}/
+          
+          # Update control file for slskdn-dev package
+          cd slskdn-dev-${VERSION}
+          sed -i 's/^Package: slskdn$/Package: slskdn-dev/' debian/control
+          sed -i 's/^Conflicts: slskd$/Conflicts: slskd, slskdn/' debian/control
+          sed -i 's/^Replaces: slskd$/Replaces: slskd, slskdn/' debian/control
+          sed -i 's/slskdn - /slskdn-dev - DEV: /' debian/control
+          
+          # Use timestamp-based PPA revision
+          PPA_REV=$(date +%Y%m%d%H%M)
+          
+          # Update changelog for slskdn-dev
+          cat > debian/changelog << EOF
+          slskdn-dev (${VERSION}-1ppa${PPA_REV}~jammy) jammy; urgency=medium
+
+            * Development build from experimental/multi-source-swarm
+            * Multi-source swarm downloads
+            * DHT mesh network
+            * BitTorrent DHT rendezvous
+
+           -- slskdn <slskdn@proton.me>  $(date -R)
+          EOF
+
+      - name: Build Source Package
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+        run: |
+          if [ -z "$GPG_PRIVATE_KEY" ]; then exit 0; fi
+          
+          VERSION="${{ needs.build.outputs.dev_version }}"
+          cd slskdn-dev-${VERSION}
+          debuild -S -sa -d -k07E2531E1F470F8008ACCFC996A07606FE65392F
+
+      - name: Configure dput
+        run: |
+          cat > ~/.dput.cf << 'EOF'
+          [slskdn-ppa]
+          fqdn = ppa.launchpad.net
+          method = ftp
+          incoming = ~keefshape/ubuntu/slskdn/
+          login = anonymous
+          allow_unsigned_uploads = 0
+          EOF
+
+      - name: Upload to PPA
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+        run: |
+          if [ -z "$GPG_PRIVATE_KEY" ]; then
+            echo "Skipping PPA upload - GPG_PRIVATE_KEY not configured"
+            exit 0
+          fi
+          ls -la *.changes || true
+          CHANGES_FILE=$(find . -name "slskdn-dev*.changes" -type f | head -1)
+          echo "Found changes file: $CHANGES_FILE"
+          dput slskdn-ppa "$CHANGES_FILE"
+
   notify:
     name: Notify
     runs-on: ubuntu-latest
-    needs: [build, release, aur, copr]
+    needs: [build, release, aur, copr, ppa]
     if: always()
     steps:
       - name: Summary
@@ -359,6 +485,7 @@ jobs:
           echo "- GitHub Release: ${{ needs.release.result }}" >> $GITHUB_STEP_SUMMARY
           echo "- AUR (slskdn-dev): ${{ needs.aur.result }}" >> $GITHUB_STEP_SUMMARY
           echo "- COPR (slskdn-dev): ${{ needs.copr.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- PPA (slskdn-dev): ${{ needs.ppa.result }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### Install Commands" >> $GITHUB_STEP_SUMMARY
           echo '```bash' >> $GITHUB_STEP_SUMMARY
@@ -368,5 +495,10 @@ jobs:
           echo "# Fedora/RHEL (COPR)" >> $GITHUB_STEP_SUMMARY
           echo "sudo dnf copr enable slskdn/slskdn-dev" >> $GITHUB_STEP_SUMMARY
           echo "sudo dnf install slskdn-dev" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "# Ubuntu/Debian (PPA)" >> $GITHUB_STEP_SUMMARY
+          echo "sudo add-apt-repository ppa:keefshape/slskdn" >> $GITHUB_STEP_SUMMARY
+          echo "sudo apt update" >> $GITHUB_STEP_SUMMARY
+          echo "sudo apt install slskdn-dev" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
 

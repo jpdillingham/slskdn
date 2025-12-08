@@ -1,7 +1,7 @@
 <p align="center">
   <img src="https://raw.githubusercontent.com/slskd/slskd/master/docs/slskd.png" width="100" height="100" alt="slskdn logo">
 </p>
-<h1 align="center">slskdn</h1>
+<h1 align="center">slskdN</h1>
 <p align="center"><strong>The batteries-included Soulseek web client</strong></p>
 <p align="center">
   <a href="https://github.com/snapetech/slskdn/releases">Releases</a> •

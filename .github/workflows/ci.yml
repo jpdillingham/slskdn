@@ -40,10 +40,14 @@ jobs:
       - name: Set Environment Variables
         id: version
         run: |
-          TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "0.24.1-slskdn.19")
+          # Get the latest tag (fallback to a known tag if none found)
+          TAG=$(git tag --sort=-version:refname | head -n1)
+          if [ -z "$TAG" ]; then
+            TAG="0.24.1-slskdn.19"
+          fi
           VERSION="${TAG}.$([[ $GITHUB_REF = refs/tags/* ]] && echo 0 || echo 65534)-$(git rev-parse --short HEAD)"
-          echo "TAG=${TAG}"
-          echo "VERSION=${VERSION}"
+          echo "Detected TAG: ${TAG}"
+          echo "Generated VERSION: ${VERSION}"
           echo "VERSION=$VERSION" >> $GITHUB_ENV
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 

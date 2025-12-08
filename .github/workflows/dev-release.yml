@@ -226,8 +226,9 @@ jobs:
           
           cd aur-pkg
           
-          # Copy the dev PKGBUILD template
+          # Copy the dev PKGBUILD template and install file
           cp ../packaging/aur/PKGBUILD-dev PKGBUILD
+          cp ../packaging/aur/slskd.install slskd.install
           
           # Convert version for Arch (replace - with .)
           ARCH_VERSION=$(echo "${{ needs.build.outputs.dev_version }}" | sed 's/-/./')
@@ -260,7 +261,7 @@ jobs:
           cd aur-pkg
           git config user.name "slskdn CI"
           git config user.email "slskdn@proton.me"
-          git add PKGBUILD .SRCINFO
+          git add PKGBUILD .SRCINFO slskd.install
           git commit -m "Update to ${{ needs.build.outputs.dev_version }}" || echo "No changes to commit"
           git push origin master || git push --set-upstream origin master
 
@@ -420,6 +421,7 @@ jobs:
           
           # Update control file for slskdn-dev package
           cd slskdn-dev-${VERSION}
+          sed -i 's/^Source: slskdn$/Source: slskdn-dev/' debian/control
           sed -i 's/^Package: slskdn$/Package: slskdn-dev/' debian/control
           sed -i 's/^Conflicts: slskd$/Conflicts: slskd, slskdn/' debian/control
           sed -i 's/^Replaces: slskd$/Replaces: slskd, slskdn/' debian/control

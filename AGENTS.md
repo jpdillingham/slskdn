@@ -4,16 +4,24 @@
 
 ---
 
-## Before Starting Any Work
+## Before Starting ANY Work
 
-1. **Read context files** (in order):
-   - `memory-bank/projectbrief.md` - Understand what this project is
-   - `memory-bank/tasks.md` - See current task list
-   - `memory-bank/activeContext.md` - Know what's currently being worked on
+### Required Reading (in order)
 
-2. **For non-trivial changes**, create or update a task in `memory-bank/tasks.md`
+1. **`memory-bank/decisions/adr-0001-known-gotchas.md`** - Critical bugs to avoid
+2. **`memory-bank/decisions/adr-0002-code-patterns.md`** - Exact patterns to follow
+3. **`memory-bank/decisions/adr-0003-anti-slop-rules.md`** - What NOT to do
+4. **`memory-bank/activeContext.md`** - Current session state
 
-3. **Check existing code patterns** before implementing new features
+### Before Writing Code
+
+```bash
+# ALWAYS grep for existing patterns first
+grep -rn "similar pattern" src/slskd/
+grep -rn "similar component" src/web/src/components/
+```
+
+If you skip this step, you WILL generate slop.
 
 ---
 
@@ -87,11 +95,24 @@ For significant architectural decisions:
 
 ## What NOT To Do
 
-- **Don't** silently overwrite human-written notes; append with timestamps
-- **Don't** create new abstractions without checking if similar patterns exist
-- **Don't** add dependencies without documenting why
-- **Don't** break API compatibility with upstream slskd
-- **Don't** modify upstream files unnecessarily (prefer extending)
+See `memory-bank/decisions/adr-0003-anti-slop-rules.md` for the full list.
+
+**Critical**:
+- ❌ Factory/wrapper/builder patterns (use DI directly)
+- ❌ Defensive null checks on internal code
+- ❌ Swallowing exceptions with catch-return-null
+- ❌ Logging method entry/exit
+- ❌ `async Task.FromResult()` for sync operations
+- ❌ Class components in React (use function + hooks)
+- ❌ Returning `undefined` from API lib functions (return `[]`)
+- ❌ `async void` without try-catch (crashes the process)
+
+**General**:
+- Don't silently overwrite human-written notes; append with timestamps
+- Don't create new abstractions without checking if similar patterns exist
+- Don't add dependencies without documenting why
+- Don't break API compatibility with upstream slskd
+- Don't modify upstream files unnecessarily (prefer extending)
 
 ---
 
@@ -107,11 +128,15 @@ For significant architectural decisions:
 
 | File | Purpose |
 |------|---------|
+| `memory-bank/decisions/adr-0001-known-gotchas.md` | **READ FIRST** - Critical bugs |
+| `memory-bank/decisions/adr-0002-code-patterns.md` | **READ FIRST** - Exact patterns |
+| `memory-bank/decisions/adr-0003-anti-slop-rules.md` | **READ FIRST** - What not to do |
+| `memory-bank/decisions/adr-0004-pr-checklist.md` | Pre-commit validation |
 | `memory-bank/projectbrief.md` | Project overview & constraints |
 | `memory-bank/tasks.md` | Task backlog (source of truth) |
 | `memory-bank/activeContext.md` | Current work context |
 | `memory-bank/progress.md` | Work log |
-| `memory-bank/scratch.md` | Temporary notes |
+| `memory-bank/scratch.md` | Temporary notes, commands |
 | `FORK_VISION.md` | Feature roadmap |
 | `DEVELOPMENT_HISTORY.md` | Release history |
 | `TODO.md` | Human-maintained todo list |

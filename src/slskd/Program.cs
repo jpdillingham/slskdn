@@ -698,6 +698,24 @@ namespace slskd
             // Capabilities - tracks available features per peer
             services.AddSingleton<Capabilities.ICapabilityService, Capabilities.CapabilityService>();
 
+            // DhtRendezvous services (BitTorrent DHT peer discovery)
+            services.AddSingleton<DhtRendezvous.IDhtRendezvousService, DhtRendezvous.DhtRendezvousService>();
+            // If DhtRendezvousService is a BackgroundService/IHostedService, register it as such
+            // Assuming it implements IHostedService based on 'Rendezvous' name implying background work
+            // Checking file content next to be sure, but standard pattern is usually AddHostedService pointing to the singleton
+            services.AddHostedService(p => (DhtRendezvous.DhtRendezvousService)p.GetRequiredService<DhtRendezvous.IDhtRendezvousService>());
+
+            // Backfill services (Long-tail content discovery)
+            services.AddSingleton<Backfill.IBackfillSchedulerService, Backfill.BackfillSchedulerService>();
+            services.AddHostedService(p => (Backfill.BackfillSchedulerService)p.GetRequiredService<Backfill.IBackfillSchedulerService>());
+
+            // Mesh services (Hash database synchronization)
+            services.AddSingleton<Mesh.IMeshSyncService, Mesh.MeshSyncService>();
+
+            // Multi-source download services (Swarm)
+            services.AddSingleton<Transfers.MultiSource.IMultiSourceDownloadService, Transfers.MultiSource.MultiSourceDownloadService>();
+            services.AddSingleton<Transfers.MultiSource.IContentVerificationService, Transfers.MultiSource.ContentVerificationService>();
+
             // Wishlist services
             var wishlistDbPath = Path.Combine(Program.AppDirectory, "wishlist.db");
             services.AddDbContextFactory<Wishlist.WishlistDbContext>(options =>

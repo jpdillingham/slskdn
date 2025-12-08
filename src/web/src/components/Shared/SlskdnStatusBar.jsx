@@ -59,26 +59,33 @@ const SlskdnStatusBar = () => {
       try {
         const data = await slskdnAPI.getSlskdnStats();
         // Get karma from localStorage for now (backend karma system is future work)
-        const storedKarma = parseInt(localStorage.getItem(KARMA_STORAGE_KEY) || '0', 10);
-        
+        const storedKarma = Number.parseInt(
+          localStorage.getItem(KARMA_STORAGE_KEY) || '0',
+          10,
+        );
+
         // Safely extract values with fallbacks
-        const hashDb = data?.hashDb || {};
+        const hashDatabase = data?.hashDb || {};
         const mesh = data?.mesh || {};
         const backfill = data?.backfill || {};
         const swarmJobs = data?.swarmJobs || [];
-        
+
         setStats({
           activeSwarms: Array.isArray(swarmJobs) ? swarmJobs.length : 0,
           backfillActive: Boolean(backfill.isActive),
-          hashCount: Number(hashDb.totalEntries) || 0,
+          hashCount: Number(hashDatabase.totalEntries) || 0,
           isSyncing: Boolean(mesh.isSyncing),
           karma: Number(data?.karma?.total) || storedKarma,
           meshPeers: Number(mesh.connectedPeerCount) || 0,
-          seqId: Number(hashDb.currentSeqId) || Number(mesh.localSeqId) || 0,
+          seqId:
+            Number(hashDatabase.currentSeqId) || Number(mesh.localSeqId) || 0,
         });
       } catch (error) {
         // Silently handle errors - status bar is non-critical
-        console.debug('Status bar fetch error (non-critical):', error?.message || error);
+        console.debug(
+          'Status bar fetch error (non-critical):',
+          error?.message || error,
+        );
       }
     };
 
@@ -171,7 +178,8 @@ const SlskdnStatusBar = () => {
                 size="small"
               />
               <span className={karma > 0 ? 'active' : ''}>
-                {karma > 0 ? '+' : ''}{karma}
+                {karma > 0 ? '+' : ''}
+                {karma}
               </span>
             </span>
           </>
@@ -219,7 +227,9 @@ const SlskdnStatusBar = () => {
           content={
             <div>
               <strong>{getKarmaTier(karma)}</strong>
-              <p style={{ margin: '4px 0 0 0', fontSize: '12px', opacity: 0.8 }}>
+              <p
+                style={{ fontSize: '12px', margin: '4px 0 0 0', opacity: 0.8 }}
+              >
                 Earn karma by helping relay connections and sharing hashes
               </p>
             </div>
@@ -236,9 +246,7 @@ const SlskdnStatusBar = () => {
                 size="small"
                 style={{ color: getKarmaColor(karma) }}
               />
-              <span style={{ color: getKarmaColor(karma) }}>
-                {karma}
-              </span>
+              <span style={{ color: getKarmaColor(karma) }}>{karma}</span>
             </span>
           }
         />

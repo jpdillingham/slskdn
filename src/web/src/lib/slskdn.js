@@ -8,8 +8,11 @@ const safeGet = async (endpoint, fallback = null) => {
   } catch (error) {
     // Return fallback for 404s or other errors - endpoint may not be implemented
     if (error?.response?.status === 404) {
-      console.debug(`Endpoint ${endpoint} not found (expected during development)`);
+      console.debug(
+        `Endpoint ${endpoint} not found (expected during development)`,
+      );
     }
+
     return fallback;
   }
 };
@@ -25,16 +28,22 @@ export const getDiscoveredPeers = async () => {
 
 // HashDatabase API
 export const getHashDatabaseStats = async () => {
-  return safeGet('/hashdb/stats', { totalHashEntries: 0, currentSeqId: 0 });
+  return safeGet('/hashdb/stats', { currentSeqId: 0, totalHashEntries: 0 });
 };
 
 export const getHashDatabaseEntries = async (limit = 100, offset = 0) => {
-  return safeGet(`/hashdb/entries?limit=${limit}&offset=${offset}`, { entries: [] });
+  return safeGet(`/hashdb/entries?limit=${limit}&offset=${offset}`, {
+    entries: [],
+  });
 };
 
 // Mesh API
 export const getMeshStats = async () => {
-  return safeGet('/mesh/stats', { knownMeshPeers: 0, currentSeqId: 0, isSyncing: false });
+  return safeGet('/mesh/stats', {
+    currentSeqId: 0,
+    isSyncing: false,
+    knownMeshPeers: 0,
+  });
 };
 
 export const getMeshPeers = async () => {
@@ -45,7 +54,7 @@ export const triggerMeshSync = async (username) => {
   try {
     return (await api.post(`/mesh/sync/${username}`)).data;
   } catch (error) {
-    return { success: false, error: error?.message || 'Sync failed' };
+    return { error: error?.message || 'Sync failed', success: false };
   }
 };
 
@@ -80,36 +89,48 @@ export const getSlskdnStats = async () => {
       ]);
 
     // Normalize hashDb response to match frontend expectations
-    const rawHashDb = hashDatabase.status === 'fulfilled' ? hashDatabase.value : null;
-    const normalizedHashDb = rawHashDb ? {
-      ...rawHashDb,
-      // Map backend field names to frontend expectations
-      totalEntries: rawHashDb.totalHashEntries ?? rawHashDb.totalEntries ?? 0,
-      currentSeqId: rawHashDb.currentSeqId ?? 0,
-    } : { totalEntries: 0, currentSeqId: 0 };
+    const rawHashDatabase =
+      hashDatabase.status === 'fulfilled' ? hashDatabase.value : null;
+    const normalizedHashDatabase = rawHashDatabase
+      ? {
+          ...rawHashDatabase,
+
+          currentSeqId: rawHashDatabase.currentSeqId ?? 0,
+          // Map backend field names to frontend expectations
+          totalEntries:
+            rawHashDatabase.totalHashEntries ??
+            rawHashDatabase.totalEntries ??
+            0,
+        }
+      : { currentSeqId: 0, totalEntries: 0 };
 
     // Normalize mesh response to match frontend expectations
     const rawMesh = mesh.status === 'fulfilled' ? mesh.value : null;
-    const normalizedMesh = rawMesh ? {
-      ...rawMesh,
-      // Map backend field names to frontend expectations
-      connectedPeerCount: rawMesh.knownMeshPeers ?? rawMesh.connectedPeerCount ?? 0,
-      localSeqId: rawMesh.currentSeqId ?? rawMesh.localSeqId ?? 0,
-      isSyncing: rawMesh.isSyncing ?? false,
-    } : { connectedPeerCount: 0, localSeqId: 0, isSyncing: false };
+    const normalizedMesh = rawMesh
+      ? {
+          ...rawMesh,
+          // Map backend field names to frontend expectations
+          connectedPeerCount:
+            rawMesh.knownMeshPeers ?? rawMesh.connectedPeerCount ?? 0,
+          isSyncing: rawMesh.isSyncing ?? false,
+          localSeqId: rawMesh.currentSeqId ?? rawMesh.localSeqId ?? 0,
+        }
+      : { connectedPeerCount: 0, isSyncing: false, localSeqId: 0 };
 
     // Normalize backfill response
     const rawBackfill = backfill.status === 'fulfilled' ? backfill.value : null;
-    const normalizedBackfill = rawBackfill ? {
-      ...rawBackfill,
-      isActive: rawBackfill.isActive ?? rawBackfill.isRunning ?? false,
-    } : { isActive: false };
+    const normalizedBackfill = rawBackfill
+      ? {
+          ...rawBackfill,
+          isActive: rawBackfill.isActive ?? rawBackfill.isRunning ?? false,
+        }
+      : { isActive: false };
 
     return {
       backfill: normalizedBackfill,
       capabilities:
         capabilities.status === 'fulfilled' ? capabilities.value : null,
-      hashDb: normalizedHashDb,
+      hashDb: normalizedHashDatabase,
       mesh: normalizedMesh,
       swarmJobs: swarmJobs.status === 'fulfilled' ? swarmJobs.value : [],
     };
@@ -118,8 +139,8 @@ export const getSlskdnStats = async () => {
     return {
       backfill: { isActive: false },
       capabilities: null,
-      hashDb: { totalEntries: 0, currentSeqId: 0 },
-      mesh: { connectedPeerCount: 0, localSeqId: 0, isSyncing: false },
+      hashDb: { currentSeqId: 0, totalEntries: 0 },
+      mesh: { connectedPeerCount: 0, isSyncing: false, localSeqId: 0 },
       swarmJobs: [],
     };
   }

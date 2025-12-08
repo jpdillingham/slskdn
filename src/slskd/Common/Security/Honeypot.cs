@@ -1,5 +1,5 @@
-// <copyright file="Honeypot.cs" company="slskdN">
-//     Copyright (c) slskdN. All rights reserved.
+// <copyright file="Honeypot.cs" company="slskd Team">
+//     Copyright (c) slskd Team. All rights reserved.
 //     Licensed under the AGPL-3.0 license. See LICENSE file in the project root for full license information.
 // </copyright>
 
@@ -523,4 +523,5 @@ public sealed class HoneypotStats
     /// <summary>Gets interactions by type.</summary>
     public required Dictionary<string, int> InteractionsByType { get; init; }
 }
+
 

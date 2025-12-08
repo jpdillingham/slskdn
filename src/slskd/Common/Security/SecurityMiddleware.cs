@@ -7,6 +7,7 @@ namespace slskd.Common.Security;
 
 using System;
 using System.Net;
+using System.Net.Sockets;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
@@ -59,7 +60,10 @@ public sealed class SecurityMiddleware
             return;
         }
 
-        // Check if IP is banned
+        // Skip aggressive rate limiting for private/local IPs (e.g., web UI from LAN)
+        var isPrivateIp = IsPrivateOrLocalIp(remoteIp);
+
+        // Check if IP is banned (still applies to private IPs if explicitly banned)
         if (_violationTracker?.IsIpBanned(remoteIp) == true)
         {
             _logger.LogWarning("Request blocked from banned IP: {Ip}", remoteIp);
@@ -68,8 +72,8 @@ public sealed class SecurityMiddleware
             return;
         }
 
-        // Check connection limits
-        if (_networkGuard != null && !_networkGuard.AllowConnection(remoteIp))
+        // Check connection limits (relaxed for private IPs)
+        if (!isPrivateIp && _networkGuard != null && !_networkGuard.AllowConnection(remoteIp))
         {
             _logger.LogWarning("Request blocked due to connection limits: {Ip}", remoteIp);
             _violationTracker?.RecordIpViolation(remoteIp, ViolationType.RateLimitExceeded, "Connection limit");
@@ -102,8 +106,8 @@ public sealed class SecurityMiddleware
                 context.Request.Protocol,
                 context.Request.Headers.UserAgent.ToString());
 
-            // Check for reconnaissance patterns
-            if (_fingerprintDetection?.IsKnownScanner(remoteIp) == true)
+            // Check for reconnaissance patterns (skip for private IPs - high false positive rate)
+            if (!isPrivateIp && _fingerprintDetection?.IsKnownScanner(remoteIp) == true)
             {
                 _logger.LogWarning("Request from known scanner: {Ip}", remoteIp);
 
@@ -168,6 +172,80 @@ public sealed class SecurityMiddleware
                 _networkGuard.UnregisterConnection(remoteIp, connectionId);
             }
         }
+    }
+
+    /// <summary>
+    /// Check if an IP address is a private/local address.
+    /// Private IPs (LAN, localhost) get relaxed rate limiting since they're typically the web UI.
+    /// </summary>
+    private static bool IsPrivateOrLocalIp(IPAddress ip)
+    {
+        // Handle IPv4-mapped IPv6 addresses
+        if (ip.IsIPv4MappedToIPv6)
+        {
+            ip = ip.MapToIPv4();
+        }
+
+        // Loopback (127.x.x.x or ::1)
+        if (IPAddress.IsLoopback(ip))
+        {
+            return true;
+        }
+
+        // IPv4 private ranges
+        if (ip.AddressFamily == AddressFamily.InterNetwork)
+        {
+            var bytes = ip.GetAddressBytes();
+
+            // 10.0.0.0/8
+            if (bytes[0] == 10)
+            {
+                return true;
+            }
+
+            // 172.16.0.0/12
+            if (bytes[0] == 172 && bytes[1] >= 16 && bytes[1] <= 31)
+            {
+                return true;
+            }
+
+            // 192.168.0.0/16
+            if (bytes[0] == 192 && bytes[1] == 168)
+            {
+                return true;
+            }
+
+            // 169.254.0.0/16 (link-local)
+            if (bytes[0] == 169 && bytes[1] == 254)
+            {
+                return true;
+            }
+        }
+
+        // IPv6 private ranges
+        if (ip.AddressFamily == AddressFamily.InterNetworkV6)
+        {
+            // Link-local (fe80::/10)
+            if (ip.IsIPv6LinkLocal)
+            {
+                return true;
+            }
+
+            // Site-local (deprecated but still used) (fec0::/10)
+            if (ip.IsIPv6SiteLocal)
+            {
+                return true;
+            }
+
+            // Unique local addresses (fc00::/7)
+            var bytes = ip.GetAddressBytes();
+            if ((bytes[0] & 0xfe) == 0xfc)
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 }
 

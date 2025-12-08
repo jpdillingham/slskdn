@@ -1,5 +1,5 @@
-// <copyright file="PeerReputation.cs" company="slskdN">
-//     Copyright (c) slskdN. All rights reserved.
+// <copyright file="PeerReputation.cs" company="slskd Team">
+//     Copyright (c) slskd Team. All rights reserved.
 //     Licensed under the AGPL-3.0 license. See LICENSE file in the project root for full license information.
 // </copyright>
 
@@ -428,4 +428,5 @@ public sealed class ReputationStats
     /// <summary>Gets or sets total protocol violations across all peers.</summary>
     public long TotalProtocolViolations { get; init; }
 }
+
 

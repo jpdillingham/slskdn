@@ -114,9 +114,10 @@ public sealed class NetworkGuardOptions
 
     /// <summary>
     /// Gets or sets max connections per IP.
+    /// Note: Web browsers make many parallel HTTP requests, so this needs to be high enough.
     /// </summary>
-    [Range(1, 100)]
-    public int MaxConnectionsPerIp { get; set; } = 3;
+    [Range(1, 1000)]
+    public int MaxConnectionsPerIp { get; set; } = 100;
 
     /// <summary>
     /// Gets or sets max global connections.
@@ -385,4 +386,5 @@ public sealed class SecurityEventOptions
     /// </summary>
     public bool PersistEvents { get; set; } = false;
 }
+
 

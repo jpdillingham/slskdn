@@ -26,8 +26,9 @@ public sealed class NetworkGuard : IDisposable
 
     /// <summary>
     /// Maximum concurrent connections per IP.
+    /// Note: Web browsers make many parallel HTTP requests (10-30+), so default is high.
     /// </summary>
-    public int MaxConnectionsPerIp { get; init; } = 3;
+    public int MaxConnectionsPerIp { get; init; } = 100;
 
     /// <summary>
     /// Maximum global concurrent connections.

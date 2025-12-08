@@ -691,6 +691,13 @@ namespace slskd
 
             services.AddSingleton<Transfers.Ranking.ISourceRankingService, Transfers.Ranking.SourceRankingService>();
 
+            // Multi-source feature services
+            // HashDb - content-addressed storage for file verification
+            services.AddSingleton<HashDb.IHashDbService>(_ => new HashDb.HashDbService(Program.AppDirectory));
+
+            // Capabilities - tracks available features per peer
+            services.AddSingleton<Capabilities.ICapabilityService, Capabilities.CapabilityService>();
+
             // Wishlist services
             var wishlistDbPath = Path.Combine(Program.AppDirectory, "wishlist.db");
             services.AddDbContextFactory<Wishlist.WishlistDbContext>(options =>

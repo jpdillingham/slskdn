@@ -164,3 +164,4 @@ namespace slskd.Transfers.Ranking
             : 0.5; // Neutral if no history
     }
 }
+

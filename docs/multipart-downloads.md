@@ -111,3 +111,4 @@ For implementation details, see:
 - [DHT Rendezvous Design](DHT_RENDEZVOUS_DESIGN.md) — peer discovery
 - [Implementation Roadmap](IMPLEMENTATION_ROADMAP.md) — development status
 
+

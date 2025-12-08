@@ -62,3 +62,4 @@ namespace slskd.Users.Notes
         public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
     }
 }
+

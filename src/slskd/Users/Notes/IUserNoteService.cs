@@ -58,3 +58,4 @@ namespace slskd.Users.Notes
         Task DeleteNoteAsync(string username, CancellationToken cancellationToken = default);
     }
 }
+

@@ -47,3 +47,4 @@ namespace slskd.Wishlist
         }
     }
 }
+

@@ -101,3 +101,4 @@ No scripts required. Everything built-in.
   <Config Name="Soulseek Password" Target="SLSKD_SLSK_PASSWORD" Default="" Mode="" Description="Your Soulseek password (or set in web UI)" Type="Variable" Display="always" Required="false" Mask="true"></Config>
 </Container>
 
+

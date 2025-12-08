@@ -222,7 +222,7 @@ dotnet run --project src/slskd/slskd.csproj
 | Multi-source downloads | ❌ | ✅ 🧪 |
 | PWA support | ❌ | ✅ |
 | Distributed hash mesh | ❌ | ✅ 🧪 |
-| DHT peer discovery | ❌ | ✅ 🧪 |
+| DHT Beacon discovery | ❌ | ✅ 🧪 |
 | NAT traversal assistance | ❌ | ✅ 🧪 |
 | Security hardening | ❌ | ✅ 🧪 |
 | Open to community feedback | 🔒 | ✅ |

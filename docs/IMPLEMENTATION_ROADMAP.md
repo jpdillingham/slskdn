@@ -44,13 +44,16 @@ This document maps out the complete implementation path for building out the mul
 
 ### Not Yet Implemented ❌
 
-| Feature | Priority | Complexity |
-|---------|----------|------------|
-| **Phase 6: BitTorrent DHT Rendezvous** | HIGH | High |
-| Capability File sharing (`__slskdn_caps__`) | MEDIUM | Low |
-| Queue Reason field overloading | LOW | Low |
-| Small-world neighbor optimization | LOW | Medium |
-| Web UI for DHT status/hash database | LOW | Medium |
+| Feature | Priority | Complexity | Status |
+|---------|----------|------------|--------|
+| ~~**Phase 6: BitTorrent DHT Rendezvous**~~ | ~~HIGH~~ | ~~High~~ | ✅ DONE |
+| ~~Web UI for DHT status/hash database~~ | ~~LOW~~ | ~~Medium~~ | ✅ DONE |
+| Capability File sharing (`__slskdn_caps__`) | LOW | Low | Future |
+| Queue Reason field overloading | LOW | Low | Future |
+| Small-world neighbor optimization | LOW | Medium | Future |
+| UPnP/STUN NAT detection | MEDIUM | Medium | Future |
+| Soulseek username verification (S13) | LOW | Medium | Future |
+| Peer diversity checks (S14) | LOW | Medium | Future |
 
 ---
 
@@ -338,9 +341,9 @@ CREATE TABLE MeshPeerState (
 
 ---
 
-## Phase 6: BitTorrent DHT Rendezvous Layer ⬜ PLANNED
+## Phase 6: BitTorrent DHT Rendezvous Layer ✅ COMPLETE
 
-> **Status:** Designed, implementation pending
+> **Status:** Fully implemented with MonoTorrent 3.0.2 DHT integration
 
 ### 6.0 Overview & Motivation
 
@@ -654,7 +657,7 @@ Beacons announce to ALL keys. Seekers query ALL keys and merge/dedupe results.
 8. ✅ Add mesh delta sync logic
 9. ⬜ Integrate mesh sync triggers into peer interactions (needs Soulseek transport)
 
-### Sprint 4: DHT Rendezvous (Phase 6) ⬜ IN PROGRESS
+### Sprint 4: DHT Rendezvous (Phase 6) ✅ COMPLETE
 
 #### 🔴 SECURITY HARDENING (COMPLETE ✅)
 
@@ -686,8 +689,8 @@ Beacons announce to ALL keys. Seekers query ALL keys and merge/dedupe results.
 | D5 | MeshOverlayServer impl (TLS) | ✅ | `MeshOverlayServer.cs` |
 | D6 | MeshOverlayConnector interface | ✅ | `IMeshOverlayConnector.cs` |
 | D7 | MeshOverlayConnector impl (TLS) | ✅ | `MeshOverlayConnector.cs` |
-| D8 | NAT detection (placeholder) | ✅ | `DhtRendezvousService.cs` (basic) |
-| D9 | MeshSyncService integration | 🔄 | Needs full handoff logic |
+| D8 | NAT detection (basic) | ✅ | `DhtRendezvousService.cs` |
+| D9 | MeshSyncService integration | ✅ | Connection handoff complete |
 | D10 | Certificate management | ✅ | `CertificateManager.cs` |
 | D11 | API endpoints | ✅ | `API/DhtRendezvousController.cs` |
 | D12 | BitTorrent DHT integration | ✅ | MonoTorrent 3.0.2 |

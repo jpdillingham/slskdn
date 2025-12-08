@@ -262,6 +262,19 @@ The following analysis outlines potential extension points within the existing S
 
 ## Implementation Progress
 
+### 🎉 All Phases Complete!
+
+| Phase | Name | Status |
+|-------|------|--------|
+| 1 | Capability Discovery | ✅ COMPLETE |
+| 2 | Local Hash Database | ✅ COMPLETE |
+| 3 | DHT/Mesh Sync Protocol | ✅ COMPLETE |
+| 4 | Backfill Scheduler | ✅ COMPLETE |
+| 5 | Integration | ✅ COMPLETE |
+| 6 | BitTorrent DHT Rendezvous | ✅ COMPLETE |
+
+---
+
 ### Phase 1: Capability Discovery ✅ COMPLETE
 
 Implemented peer capability discovery for `slskdn` clients to find each other on the network.
@@ -379,7 +392,7 @@ Integrated HashDb and MeshSync with existing multi-source download system.
 - Hash propagation across slskdn network
 - Reduced network overhead for popular files
 
-### Phase 6: BitTorrent DHT Rendezvous Layer 🔄 IN PROGRESS
+### Phase 6: BitTorrent DHT Rendezvous Layer ✅ COMPLETE
 
 Implements a decentralized peer discovery mechanism using BitTorrent DHT as a rendezvous point.
 
@@ -390,6 +403,22 @@ When a new `slskdn` client starts, it has no mesh neighbors to sync with. Phase 
 - **Beacons**: Publicly reachable clients that announce to DHT and accept inbound connections
 - **Seekers**: NAT'd clients that query DHT and connect outbound to beacons
 - **Overlay Port**: Separate TCP port (default 50305) for mesh handshake and sync
+
+**DHT Library: MonoTorrent 3.0.2**
+
+Uses the full MonoTorrent DHT implementation:
+- `DhtEngine` for routing table, RPC, and message loop
+- `get_peers()` to discover other slskdn clients
+- `announce_peer()` for beacons to advertise overlay port
+- Bootstrap from public nodes (`router.bittorrent.com`, etc.)
+- Saves/restores `dht_nodes.bin` for fast restarts
+
+**Rendezvous Infohashes:**
+```
+SHA1("slskdn-mesh-v1")         - Primary
+SHA1("slskdn-mesh-v1-backup-1") - Backup
+SHA1("slskdn-mesh-v1-backup-2") - Backup
+```
 
 **Transport Decision:**
 The overlay TCP connection established via DHT rendezvous is reused for Phase 3 mesh sync messages. We do NOT:
@@ -407,12 +436,13 @@ The overlay TCP connection established via DHT rendezvous is reused for Phase 3 
 | Certificate pinning | `CertificatePinStore.cs` (TOFU model) |
 | IP/username blocklist | `OverlayBlocklist.cs` |
 
-**Core Components (COMPLETE ✅):**
-- `DhtRendezvousService` - DHT bootstrap, announce, discovery loops
+**Core Components (ALL COMPLETE ✅):**
+- `DhtRendezvousService` - Real MonoTorrent DHT integration
 - `MeshOverlayServer` - TLS TCP listener for inbound connections
 - `MeshOverlayConnector` - TLS client for outbound connections
 - `MeshNeighborRegistry` - Track active mesh peers (max 10)
 - `MeshOverlayConnection` - Secure connection wrapper with handshake
+- All services registered in `Program.cs`
 
 **API Endpoints:**
 ```
@@ -427,10 +457,10 @@ POST /api/v0/overlay/blocklist/ip  → Block an IP
 POST /api/v0/overlay/blocklist/username → Block a username
 ```
 
-**Remaining Work:**
-- Service registration in `Program.cs`
-- BitTorrent DHT library integration (MonoTorrent)
-- Proper NAT detection (UPnP/STUN)
+**Future Enhancements:**
+- UPnP/STUN for proper NAT detection
+- Soulseek username verification (S13)
+- Peer diversity checks (S14)
 
 ---
 

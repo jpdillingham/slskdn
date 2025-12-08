@@ -43,6 +43,7 @@ export const toggleStatusBarVisibility = () => {
   return !current;
 };
 
+// eslint-disable-next-line complexity
 const SlskdnStatusBar = () => {
   const [stats, setStats] = useState({
     activeSwarms: 0,
@@ -75,20 +76,25 @@ const SlskdnStatusBar = () => {
         const swarmJobs = data?.swarmJobs || [];
         const dht = data?.dht || {};
 
-        setStats((prev) => ({
-          ...prev,
+        setStats((previous) => ({
+          ...previous,
           activeSwarms: Array.isArray(swarmJobs) ? swarmJobs.length : 0,
           backfillActive: Boolean(backfill.isActive),
-          dhtNodes: Number(dht.dhtNodeCount) || prev.dhtNodes,
-          discoveredPeers: Number(dht.discoveredPeerCount) || prev.discoveredPeers,
+          dhtNodes: Number(dht.dhtNodeCount) || previous.dhtNodes,
+          discoveredPeers:
+            Number(dht.discoveredPeerCount) || previous.discoveredPeers,
           hashCount: Number(hashDatabase.totalEntries) || 0,
-          isBeacon: dht.isBeaconCapable !== undefined ? Boolean(dht.isBeaconCapable) : prev.isBeacon,
+          isBeacon:
+            dht.isBeaconCapable === undefined
+              ? previous.isBeacon
+              : Boolean(dht.isBeaconCapable),
           isSyncing: Boolean(mesh.isSyncing),
           karma: Number(data?.karma?.total) || storedKarma,
           meshPeers: Number(mesh.connectedPeerCount) || 0,
           seqId:
             Number(hashDatabase.currentSeqId) || Number(mesh.localSeqId) || 0,
-          verifiedBeacons: Number(dht.verifiedBeaconCount) || prev.verifiedBeacons,
+          verifiedBeacons:
+            Number(dht.verifiedBeaconCount) || previous.verifiedBeacons,
         }));
       } catch (error) {
         // Silently handle errors - status bar is non-critical

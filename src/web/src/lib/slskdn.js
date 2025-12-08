@@ -87,6 +87,7 @@ export const getDhtStatus = async () => {
 };
 
 // Combined stats fetch for dashboard
+// eslint-disable-next-line complexity
 export const getSlskdnStats = async () => {
   try {
     const [capabilities, hashDatabase, mesh, backfill, swarmJobs, dht] =

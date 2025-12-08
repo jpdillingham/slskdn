@@ -115,6 +115,7 @@ public sealed class DhtRendezvousStats
     public bool IsBeaconCapable { get; init; }
     public bool IsDhtRunning { get; init; }
     public int DhtNodeCount { get; init; }
+    public string DhtState { get; init; } = "Unknown";
     public int DiscoveredPeerCount { get; init; }
     public int ActiveMeshConnections { get; init; }
     public long TotalPeersDiscovered { get; init; }

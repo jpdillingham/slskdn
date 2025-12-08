@@ -8,6 +8,7 @@ namespace slskd.DhtRendezvous;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Net;
 using System.Security.Cryptography;
@@ -16,13 +17,16 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using MonoTorrent;
+using MonoTorrent.Connections.Dht;
+using MonoTorrent.Dht;
 
 /// <summary>
 /// Service for discovering and connecting to mesh peers via BitTorrent DHT rendezvous.
 /// 
-/// This is a placeholder implementation that manages peer discovery and connection
-/// without an actual DHT library integration. The DHT integration can be added later
-/// using MonoTorrent or a similar library.
+/// Uses MonoTorrent's DHT implementation to:
+/// - Beacons: announce_peer on rendezvous infohash to advertise overlay port
+/// - Seekers: get_peers on rendezvous infohash to discover beacons
 /// </summary>
 public sealed class DhtRendezvousService : BackgroundService, IDhtRendezvousService
 {
@@ -32,6 +36,10 @@ public sealed class DhtRendezvousService : BackgroundService, IDhtRendezvousServ
     private readonly MeshNeighborRegistry _registry;
     private readonly DhtRendezvousOptions _options;
     
+    // MonoTorrent DHT components
+    private DhtEngine? _dhtEngine;
+    private IDhtListener? _dhtListener;
+    
     private readonly ConcurrentBag<IPEndPoint> _discoveredPeers = new();
     private DateTimeOffset? _lastAnnounceTime;
     private DateTimeOffset? _lastDiscoveryTime;
@@ -40,10 +48,10 @@ public sealed class DhtRendezvousService : BackgroundService, IDhtRendezvousServ
     private long _totalConnectionsAttempted;
     private long _totalConnectionsSucceeded;
     
-    // Rendezvous infohashes
-    private static readonly byte[] MainInfohash = ComputeInfohash("slskdn-mesh-v1");
-    private static readonly byte[] BackupInfohash1 = ComputeInfohash("slskdn-mesh-v1-backup-1");
-    private static readonly byte[] BackupInfohash2 = ComputeInfohash("slskdn-mesh-v1-backup-2");
+    // Rendezvous infohashes (SHA1 of key strings)
+    private static readonly InfoHash MainInfohash = InfoHash.FromMemory(SHA1.HashData(Encoding.UTF8.GetBytes("slskdn-mesh-v1")));
+    private static readonly InfoHash BackupInfohash1 = InfoHash.FromMemory(SHA1.HashData(Encoding.UTF8.GetBytes("slskdn-mesh-v1-backup-1")));
+    private static readonly InfoHash BackupInfohash2 = InfoHash.FromMemory(SHA1.HashData(Encoding.UTF8.GetBytes("slskdn-mesh-v1-backup-2")));
     
     public DhtRendezvousService(
         ILogger<DhtRendezvousService> logger,
@@ -60,8 +68,8 @@ public sealed class DhtRendezvousService : BackgroundService, IDhtRendezvousServ
     }
     
     public bool IsBeaconCapable { get; private set; }
-    public bool IsDhtRunning { get; private set; }
-    public int DhtNodeCount => 0; // TODO: Implement with actual DHT library
+    public bool IsDhtRunning => _dhtEngine?.State == DhtState.Ready;
+    public int DhtNodeCount => _dhtEngine?.NodeCount ?? 0;
     public int DiscoveredPeerCount => _discoveredPeers.Count;
     public int ActiveMeshConnections => _registry.Count;
     
@@ -73,33 +81,65 @@ public sealed class DhtRendezvousService : BackgroundService, IDhtRendezvousServ
             return;
         }
         
-        _logger.LogInformation("Starting DHT rendezvous service");
+        _logger.LogInformation("Starting DHT rendezvous service with MonoTorrent DHT");
         
-        // Detect beacon capability (simplified - in production would use UPnP/STUN)
-        IsBeaconCapable = await DetectBeaconCapabilityAsync(cancellationToken);
-        
-        if (IsBeaconCapable)
+        try
         {
-            _logger.LogInformation("This client is beacon-capable, starting overlay server");
-            await _overlayServer.StartAsync(cancellationToken);
+            // Initialize MonoTorrent DHT
+            await InitializeDhtAsync(cancellationToken);
+            
+            // Detect beacon capability
+            IsBeaconCapable = await DetectBeaconCapabilityAsync(cancellationToken);
+            
+            if (IsBeaconCapable)
+            {
+                _logger.LogInformation("This client is beacon-capable, starting overlay server on port {Port}", _options.OverlayPort);
+                await _overlayServer.StartAsync(cancellationToken);
+            }
+            else
+            {
+                _logger.LogInformation("This client is not beacon-capable (behind NAT), will connect to beacons");
+            }
+            
+            _startedAt = DateTimeOffset.UtcNow;
+            
+            await base.StartAsync(cancellationToken);
         }
-        else
+        catch (Exception ex)
         {
-            _logger.LogInformation("This client is not beacon-capable (behind NAT), will connect to beacons");
+            _logger.LogError(ex, "Failed to start DHT rendezvous service");
+            throw;
         }
-        
-        _startedAt = DateTimeOffset.UtcNow;
-        IsDhtRunning = true;
-        
-        await base.StartAsync(cancellationToken);
     }
     
     public override async Task StopAsync(CancellationToken cancellationToken = default)
     {
         _logger.LogInformation("Stopping DHT rendezvous service");
         
-        await _overlayServer.StopAsync();
-        IsDhtRunning = false;
+        try
+        {
+            // Save DHT state for faster restart
+            if (_dhtEngine is not null)
+            {
+                var dhtStatePath = Path.Combine(Program.AppDirectory, "dht_nodes.bin");
+                var nodes = await _dhtEngine.SaveNodesAsync();
+                if (nodes.Length > 0)
+                {
+                    await File.WriteAllBytesAsync(dhtStatePath, nodes.ToArray(), cancellationToken);
+                    _logger.LogDebug("Saved {Count} bytes of DHT state", nodes.Length);
+                }
+                
+                await _dhtEngine.StopAsync();
+                _dhtEngine.Dispose();
+                _dhtEngine = null;
+            }
+            
+            await _overlayServer.StopAsync();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Error during DHT shutdown");
+        }
         
         await base.StopAsync(cancellationToken);
     }
@@ -111,9 +151,27 @@ public sealed class DhtRendezvousService : BackgroundService, IDhtRendezvousServ
     
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        // Wait a bit for startup
-        await Task.Delay(TimeSpan.FromSeconds(10), stoppingToken);
+        // Wait for DHT to bootstrap
+        _logger.LogInformation("Waiting for DHT to bootstrap...");
+        var bootstrapTimeout = TimeSpan.FromSeconds(30);
+        var sw = System.Diagnostics.Stopwatch.StartNew();
         
+        while (_dhtEngine?.State != DhtState.Ready && sw.Elapsed < bootstrapTimeout && !stoppingToken.IsCancellationRequested)
+        {
+            await Task.Delay(TimeSpan.FromSeconds(1), stoppingToken);
+        }
+        
+        if (_dhtEngine?.State == DhtState.Ready)
+        {
+            _logger.LogInformation("DHT bootstrapped successfully with {NodeCount} nodes", _dhtEngine.NodeCount);
+        }
+        else
+        {
+            _logger.LogWarning("DHT bootstrap timed out, continuing anyway (state: {State}, nodes: {Nodes})", 
+                _dhtEngine?.State, _dhtEngine?.NodeCount ?? 0);
+        }
+        
+        // Main loop
         while (!stoppingToken.IsCancellationRequested)
         {
             try
@@ -146,64 +204,194 @@ public sealed class DhtRendezvousService : BackgroundService, IDhtRendezvousServ
         }
     }
     
-    public async Task<int> DiscoverPeersAsync(CancellationToken cancellationToken = default)
+    private async Task InitializeDhtAsync(CancellationToken cancellationToken)
     {
-        _logger.LogDebug("Running DHT peer discovery");
-        _lastDiscoveryTime = DateTimeOffset.UtcNow;
+        _logger.LogDebug("Initializing MonoTorrent DHT engine");
         
-        // TODO: Implement actual DHT get_peers query
-        // For now, this is a placeholder that would be replaced with:
-        // var peers = await _dhtClient.GetPeersAsync(MainInfohash, cancellationToken);
-        // peers.AddRange(await _dhtClient.GetPeersAsync(BackupInfohash1, cancellationToken));
-        // peers.AddRange(await _dhtClient.GetPeersAsync(BackupInfohash2, cancellationToken));
+        // Create DHT engine
+        _dhtEngine = new DhtEngine();
         
-        var newPeers = new List<IPEndPoint>();
+        // Subscribe to peer discovery events
+        _dhtEngine.PeersFound += OnPeersFound;
+        _dhtEngine.StateChanged += OnDhtStateChanged;
         
-        // Placeholder: In production, these would come from DHT
-        // This demonstrates the flow without actual DHT integration
+        // Create UDP listener for DHT on a random port (standard DHT port range)
+        var dhtPort = _options.DhtPort > 0 ? _options.DhtPort : new Random().Next(6881, 6999);
+        _dhtListener = MonoTorrent.Factories.Default.CreateDhtListener(new IPEndPoint(IPAddress.Any, dhtPort));
         
-        if (newPeers.Count > 0)
+        if (_dhtListener is null)
         {
-            foreach (var peer in newPeers)
-            {
-                _discoveredPeers.Add(peer);
-            }
-            
-            Interlocked.Add(ref _totalPeersDiscovered, newPeers.Count);
-            _logger.LogInformation("Discovered {Count} new mesh peers via DHT", newPeers.Count);
-            
-            // Try to connect to discovered peers
-            Interlocked.Add(ref _totalConnectionsAttempted, newPeers.Count);
-            var connected = await _overlayConnector.ConnectToCandidatesAsync(newPeers, cancellationToken);
-            Interlocked.Add(ref _totalConnectionsSucceeded, connected);
-            
-            return connected;
+            throw new InvalidOperationException("Failed to create DHT listener");
         }
         
-        _logger.LogDebug("No new peers discovered via DHT");
-        return 0;
+        _logger.LogDebug("Created DHT listener on port {Port}", dhtPort);
+        
+        // Attach listener to engine
+        await _dhtEngine.SetListenerAsync(_dhtListener);
+        
+        // Try to load saved DHT state
+        var dhtStatePath = Path.Combine(Program.AppDirectory, "dht_nodes.bin");
+        ReadOnlyMemory<byte> initialNodes = default;
+        
+        if (File.Exists(dhtStatePath))
+        {
+            try
+            {
+                initialNodes = await File.ReadAllBytesAsync(dhtStatePath, cancellationToken);
+                _logger.LogDebug("Loaded {Bytes} bytes of saved DHT state", initialNodes.Length);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to load saved DHT state");
+            }
+        }
+        
+        // Start DHT engine (will bootstrap from saved nodes or public bootstrap nodes)
+        if (initialNodes.Length > 0)
+        {
+            await _dhtEngine.StartAsync(initialNodes);
+        }
+        else
+        {
+            await _dhtEngine.StartAsync();
+        }
+        
+        _logger.LogInformation("DHT engine started, state: {State}", _dhtEngine.State);
     }
     
-    public async Task AnnounceAsync(CancellationToken cancellationToken = default)
+    private void OnPeersFound(object? sender, PeersFoundEventArgs e)
+    {
+        // Check if this is for one of our rendezvous infohashes
+        if (!IsOurRendezvousHash(e.InfoHash))
+        {
+            return;
+        }
+        
+        _logger.LogInformation("DHT found {Count} peers for rendezvous hash {Hash}", 
+            e.Peers.Count, e.InfoHash);
+        
+        foreach (var peerInfo in e.Peers)
+        {
+            try
+            {
+                // PeerInfo contains a ConnectionUri with the peer address
+                var uri = peerInfo.ConnectionUri;
+                if (uri is null)
+                {
+                    continue;
+                }
+                
+                // Parse IP and port from URI (format: ipv4://192.168.1.1:port or ipv6://[::1]:port)
+                if (!IPAddress.TryParse(uri.Host, out var ip))
+                {
+                    _logger.LogDebug("Could not parse IP from peer URI: {Uri}", uri);
+                    continue;
+                }
+                
+                var endpoint = new IPEndPoint(ip, uri.Port);
+                
+                // Don't add ourselves or already-known peers
+                if (!_discoveredPeers.Contains(endpoint))
+                {
+                    _discoveredPeers.Add(endpoint);
+                    Interlocked.Increment(ref _totalPeersDiscovered);
+                    _logger.LogDebug("Discovered new mesh peer: {Endpoint}", endpoint);
+                    
+                    // Try to connect asynchronously
+                    _ = TryConnectToPeerAsync(endpoint);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to parse peer info: {Peer}", peerInfo);
+            }
+        }
+    }
+    
+    private async Task TryConnectToPeerAsync(IPEndPoint endpoint)
+    {
+        try
+        {
+            Interlocked.Increment(ref _totalConnectionsAttempted);
+            var connected = await _overlayConnector.ConnectToCandidatesAsync(new[] { endpoint });
+            if (connected > 0)
+            {
+                Interlocked.Increment(ref _totalConnectionsSucceeded);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Failed to connect to discovered peer {Endpoint}", endpoint);
+        }
+    }
+    
+    private void OnDhtStateChanged(object? sender, EventArgs e)
+    {
+        _logger.LogInformation("DHT state changed to: {State}, nodes: {NodeCount}", 
+            _dhtEngine?.State, _dhtEngine?.NodeCount ?? 0);
+    }
+    
+    private bool IsOurRendezvousHash(InfoHash hash)
+    {
+        return hash.Equals(MainInfohash) || 
+               hash.Equals(BackupInfohash1) || 
+               hash.Equals(BackupInfohash2);
+    }
+    
+    public async Task<int> DiscoverPeersAsync(CancellationToken cancellationToken = default)
+    {
+        if (_dhtEngine is null || _dhtEngine.State != DhtState.Ready)
+        {
+            _logger.LogWarning("Cannot discover peers - DHT not ready (state: {State})", _dhtEngine?.State);
+            return 0;
+        }
+        
+        _logger.LogDebug("Running DHT peer discovery (get_peers)");
+        _lastDiscoveryTime = DateTimeOffset.UtcNow;
+        
+        var beforeCount = _totalPeersDiscovered;
+        
+        // Query all rendezvous infohashes
+        // GetPeers is non-blocking; results come via PeersFound event
+        _dhtEngine.GetPeers(MainInfohash);
+        _dhtEngine.GetPeers(BackupInfohash1);
+        _dhtEngine.GetPeers(BackupInfohash2);
+        
+        // Wait a bit for responses
+        await Task.Delay(TimeSpan.FromSeconds(5), cancellationToken);
+        
+        var newPeers = (int)(_totalPeersDiscovered - beforeCount);
+        _logger.LogInformation("DHT discovery found {Count} new peers", newPeers);
+        
+        return newPeers;
+    }
+    
+    public Task AnnounceAsync(CancellationToken cancellationToken = default)
     {
         if (!IsBeaconCapable)
         {
             _logger.LogWarning("Cannot announce - not beacon capable");
-            return;
+            return Task.CompletedTask;
         }
         
-        _logger.LogDebug("Announcing to DHT");
+        if (_dhtEngine is null || _dhtEngine.State != DhtState.Ready)
+        {
+            _logger.LogWarning("Cannot announce - DHT not ready (state: {State})", _dhtEngine?.State);
+            return Task.CompletedTask;
+        }
+        
+        _logger.LogDebug("Announcing to DHT (announce_peer) with overlay port {Port}", _options.OverlayPort);
         _lastAnnounceTime = DateTimeOffset.UtcNow;
         
-        // TODO: Implement actual DHT announce_peer
-        // For each rendezvous key:
-        // await _dhtClient.AnnouncePeerAsync(MainInfohash, _options.OverlayPort, cancellationToken);
-        // await _dhtClient.AnnouncePeerAsync(BackupInfohash1, _options.OverlayPort, cancellationToken);
-        // await _dhtClient.AnnouncePeerAsync(BackupInfohash2, _options.OverlayPort, cancellationToken);
+        // Announce on all rendezvous infohashes
+        _dhtEngine.Announce(MainInfohash, _options.OverlayPort);
+        _dhtEngine.Announce(BackupInfohash1, _options.OverlayPort);
+        _dhtEngine.Announce(BackupInfohash2, _options.OverlayPort);
         
-        _logger.LogInformation("Announced overlay port {Port} to DHT", _options.OverlayPort);
+        _logger.LogInformation("Announced overlay port {Port} to DHT on {Count} infohashes", 
+            _options.OverlayPort, 3);
         
-        await Task.CompletedTask;
+        return Task.CompletedTask;
     }
     
     public IReadOnlyList<IPEndPoint> GetDiscoveredPeers()
@@ -223,6 +411,7 @@ public sealed class DhtRendezvousService : BackgroundService, IDhtRendezvousServ
             IsBeaconCapable = IsBeaconCapable,
             IsDhtRunning = IsDhtRunning,
             DhtNodeCount = DhtNodeCount,
+            DhtState = _dhtEngine?.State.ToString() ?? "NotStarted",
             DiscoveredPeerCount = DiscoveredPeerCount,
             ActiveMeshConnections = ActiveMeshConnections,
             TotalPeersDiscovered = _totalPeersDiscovered,
@@ -279,8 +468,6 @@ public sealed class DhtRendezvousService : BackgroundService, IDhtRendezvousServ
             listener.Start();
             listener.Stop();
             
-            // If we can bind, assume we're beacon-capable
-            // This is a simplification - real implementation would do proper NAT detection
             _logger.LogDebug("Successfully bound to overlay port {Port}", _options.OverlayPort);
             return true;
         }
@@ -289,11 +476,6 @@ public sealed class DhtRendezvousService : BackgroundService, IDhtRendezvousServ
             _logger.LogDebug(ex, "Could not bind to overlay port {Port}", _options.OverlayPort);
             return false;
         }
-    }
-    
-    private static byte[] ComputeInfohash(string rendezvousKey)
-    {
-        return SHA1.HashData(Encoding.UTF8.GetBytes(rendezvousKey));
     }
 }
 
@@ -313,6 +495,11 @@ public sealed class DhtRendezvousOptions
     public int OverlayPort { get; set; } = 50305;
     
     /// <summary>
+    /// UDP port for DHT. If 0, a random port in range 6881-6999 is used.
+    /// </summary>
+    public int DhtPort { get; set; } = 0;
+    
+    /// <summary>
     /// Interval between DHT announcements (seconds).
     /// </summary>
     public int AnnounceIntervalSeconds { get; set; } = 900; // 15 minutes
@@ -326,15 +513,4 @@ public sealed class DhtRendezvousOptions
     /// Minimum mesh neighbors before triggering discovery.
     /// </summary>
     public int MinNeighbors { get; set; } = 3;
-    
-    /// <summary>
-    /// Bootstrap DHT nodes.
-    /// </summary>
-    public List<string> BootstrapNodes { get; set; } = new()
-    {
-        "router.bittorrent.com:6881",
-        "dht.transmissionbt.com:6881",
-        "router.utorrent.com:6881",
-    };
 }
-

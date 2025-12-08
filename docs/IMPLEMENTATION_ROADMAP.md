@@ -690,7 +690,7 @@ Beacons announce to ALL keys. Seekers query ALL keys and merge/dedupe results.
 | D9 | MeshSyncService integration | 🔄 | Needs full handoff logic |
 | D10 | Certificate management | ✅ | `CertificateManager.cs` |
 | D11 | API endpoints | ✅ | `API/DhtRendezvousController.cs` |
-| D12 | BitTorrent DHT integration | ⬜ | MonoTorrent (future) |
+| D12 | BitTorrent DHT integration | ✅ | MonoTorrent 3.0.2 |
 | D13 | Service registration | ✅ | `Program.cs` |
 
 #### Phase 6 Files to Create

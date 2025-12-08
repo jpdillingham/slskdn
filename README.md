@@ -4,20 +4,59 @@
 
 ---
 
-## 🚀 Experimental Features
+## ✨ Features (v0.24.1-slskdn.27)
 
-### Multi-Source Downloads
-
+### Multi-Source Downloads ✅
 Download files from multiple peers simultaneously, dramatically improving speed and reliability.
 
-| Feature | Benefit |
-|---------|---------|
-| **Parallel chunk downloads** | Faster completion times |
-| **Automatic source discovery** | Finds all peers with matching files |
-| **Intelligent stitching** | Seamlessly assembles chunks |
-| **Failure resilience** | Continues from other sources if one fails |
+| Feature | Status |
+|---------|--------|
+| **Parallel chunk downloads** | ✅ Working |
+| **Automatic source discovery** | ✅ Working |
+| **Intelligent stitching** | ✅ Working |
+| **Failure resilience** | ✅ Working |
+| **Content verification (SHA256)** | ✅ Working |
 
-#### Is This Damaging to the Network?
+### DHT Peer Discovery ✅
+Discover other slskdn users via BitTorrent DHT:
+
+| Feature | Status |
+|---------|--------|
+| **DHT bootstrap** | ✅ 60+ nodes |
+| **Mesh overlay network** | ✅ TLS-encrypted P2P |
+| **Hash database sync** | ✅ Epidemic sync |
+| **Peer greeting service** | ✅ Auto-discovery |
+| **NAT detection** | ✅ UPnP/NAT-PMP |
+
+### Security Hardening ✅
+Zero-trust security framework with defense-in-depth:
+
+| Feature | Status |
+|---------|--------|
+| **NetworkGuard** | ✅ Rate limiting, connection caps |
+| **ViolationTracker** | ✅ Auto-escalating bans |
+| **PathGuard** | ✅ Directory traversal prevention |
+| **ContentSafety** | ✅ Magic byte verification |
+| **PeerReputation** | ✅ Behavioral scoring |
+| **CryptographicCommitment** | ✅ Pre-transfer hash commitment |
+| **ProofOfStorage** | ✅ Random chunk challenges |
+| **ByzantineConsensus** | ✅ 2/3+1 voting for multi-source |
+| **EntropyMonitor** | ✅ RNG health checks |
+| **FingerprintDetection** | ✅ Reconnaissance detection |
+| **Honeypot & CanaryTraps** | ✅ Threat profiling |
+
+### UI Enhancements ✅
+
+| Feature | Status |
+|---------|--------|
+| **SlskdnStatusBar** | ✅ Live DHT/mesh/hash stats |
+| **Network tab** | ✅ Mesh overlay monitoring |
+| **Security tab** | ✅ Security dashboard |
+| **Footer bar** | ✅ GitHub, Discord links |
+
+---
+
+## 📖 Is Multi-Source Damaging to the Network?
 
 **No.** Multi-source downloads distribute load across peers instead of hammering a single user. The impact is equivalent to multiple individual users downloading a file — which already happens organically.
 
@@ -30,26 +69,21 @@ Download files from multiple peers simultaneously, dramatically improving speed 
 
 ---
 
-### DHT Peer Discovery
+## 🚀 Quick Start
 
-Discover other slskdn users via BitTorrent DHT for enhanced features:
+```bash
+# Clone
+git clone https://github.com/snapetech/slskdn.git
+cd slskdn
 
-- **Mesh overlay network** — secure, TLS-encrypted peer-to-peer communication
-- **Hash database sync** — share file fingerprints for better matching
-- **Source ranking** — prioritize reliable, fast peers
+# Build
+dotnet build src/slskd/slskd.csproj
 
-📖 **[Design document: docs/DHT_RENDEZVOUS_DESIGN.md](docs/DHT_RENDEZVOUS_DESIGN.md)**
+# Run
+dotnet run --project src/slskd/slskd.csproj
+```
 
----
-
-### Protocol Extensions
-
-Experimental enhancements to the Soulseek protocol:
-
-- Chunked/multi-part transfers
-- Content verification (SHA256)
-- Peer reputation tracking
-- Acoustic fingerprint matching
+Open http://localhost:5030 (default credentials: slskd/slskd)
 
 ---
 
@@ -59,10 +93,34 @@ Experimental enhancements to the Soulseek protocol:
 |----------|-------------|
 | [Multi-Source Downloads](docs/multipart-downloads.md) | Network impact analysis |
 | [DHT Rendezvous Design](docs/DHT_RENDEZVOUS_DESIGN.md) | Peer discovery architecture |
+| [Security Specs](docs/SECURITY_IMPLEMENTATION_SPECS.md) | Security feature details |
 | [Implementation Roadmap](docs/IMPLEMENTATION_ROADMAP.md) | Development status |
+| [Merge Branch Status](docs/MERGE_BRANCH_STATUS.md) | Latest smoke test results |
 | [Configuration](docs/config.md) | All configuration options |
 | [Building](docs/build.md) | Build instructions |
 | [Docker](docs/docker.md) | Container deployment |
+
+---
+
+## 🔧 Configuration
+
+### Enable Security Features
+
+Add to your `slskd.yml`:
+
+```yaml
+Security:
+  Enabled: true
+  Profile: Standard  # Minimal, Standard, Maximum, or Custom
+```
+
+### Security Profiles
+
+| Profile | Features |
+|---------|----------|
+| **Minimal** | NetworkGuard, ViolationTracker only |
+| **Standard** | + PeerReputation, Consensus, Fingerprinting |
+| **Maximum** | All features including Honeypots |
 
 ---
 
@@ -74,18 +132,18 @@ For the stable upstream client, see [slskd/slskd](https://github.com/slskd/slskd
 
 ---
 
-## 🔒 Security
+## 🤝 Contributing
 
-slskdn includes defense-in-depth security features:
-
-- **Input validation** — all peer data is untrusted and validated
-- **Rate limiting** — prevents abuse and DoS attacks
-- **Path sanitization** — prevents directory traversal
-- **Content verification** — detects file type mismatches
-- **Violation tracking** — auto-escalating bans for bad actors
+PRs welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
 ---
 
-## License
+## 📜 License
 
 AGPL-3.0 — See [LICENSE](LICENSE) for details.
+
+---
+
+<p align="center">
+  <em>"slop on top"</em> 🍦🤖✨
+</p>

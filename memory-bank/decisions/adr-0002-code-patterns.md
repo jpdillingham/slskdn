@@ -632,15 +632,33 @@ Dev builds MUST include timestamps to differentiate multiple builds on the same 
 
 **Format**: `dev-YYYYMMDD-HHMMSS`
 
-**Example**: `dev-20251209-203936` (December 9, 2025 at 20:39:36 UTC)
+**Example**: `dev-20251209-204838` (December 9, 2025 at 20:48:38 UTC)
 
 **Where This Applies**:
-- Git tag name: `dev-20251209-203936`
-- Release filename: `slskdn-dev-20251209-203936-linux-x64.zip`
-- GitHub release title: `Dev Build 20251209-203936`
-- PKGBUILD pkgver: `0.24.1.dev.20251209203936`
-- Release notes header: `dev-20251209-203936`
-- Docker tags: `ghcr.io/snapetech/slskdn:dev-20251209-203936` and `ghcr.io/snapetech/slskdn:dev-latest`
+- Git tag name: `dev-20251209-204838` (hyphens OK)
+- Release filename: `slskdn-dev-20251209-204838-linux-x64.zip` (hyphens OK)
+- GitHub release title: `Dev Build 20251209-204838` (hyphens OK)
+- Docker tags: `ghcr.io/snapetech/slskdn:dev-20251209-204838` and `ghcr.io/snapetech/slskdn:dev-latest`
+
+**Package Version Conversion** (hyphens → dots):
+
+Package managers don't allow hyphens in versions. Convert to dots using `sed 's/-/./g'`:
+
+```bash
+# Git tag (hyphens OK)
+DEV_VERSION="0.24.1-dev-20251209-204838"
+
+# Package versions (convert ALL hyphens to dots)
+PKG_VERSION=$(echo "$DEV_VERSION" | sed 's/-/./g')
+# Result: 0.24.1.dev.20251209.204838
+```
+
+**Package Filenames and Versions**:
+- AUR pkgver: `0.24.1.dev.20251209204838` (dots removed from timestamp)
+- RPM Version: `0.24.1.dev.20251209.204838`
+- DEB version: `0.24.1.dev.20251209.204838-1`
+- .deb filename: `slskdn-dev_0.24.1.dev.20251209.204838_amd64.deb`
+- .rpm filename: `slskdn-dev-0.24.1.dev.20251209.204838.x86_64.rpm`
 
 **Workflow Implementation**:
 ```bash
@@ -648,11 +666,14 @@ Dev builds MUST include timestamps to differentiate multiple builds on the same 
 TIMESTAMP=$(date -u +%Y%m%d-%H%M%S)
 TAG="dev-${TIMESTAMP}"
 
-# Use in filenames
+# Use in filenames (hyphens OK)
 ZIP="slskdn-dev-${TIMESTAMP}-linux-x64.zip"
 
-# Use in AUR
-PKGVER="0.24.1.dev.${TIMESTAMP//-/}"  # Remove hyphen: 20251209203936
+# Convert for packages (ALL hyphens → dots)
+PKG_VERSION=$(echo "0.24.1-dev-${TIMESTAMP}" | sed 's/-/./g')
+
+# Use in AUR (also remove dots from timestamp for epoch-style number)
+PKGVER="0.24.1.dev.${TIMESTAMP//-/}"  # Result: 0.24.1.dev.20251209204838
 ```
 
 **Triggering Dev Builds**:
@@ -668,7 +689,11 @@ PKGVER="0.24.1.dev.${TIMESTAMP//-/}"  # Remove hyphen: 20251209203936
 - Docker: `ghcr.io/snapetech/slskdn:dev-latest` and timestamped tags
 - Direct .deb and .rpm downloads from GitHub release
 
-**Why**: Multiple dev builds can happen on the same day. Without timestamps, tags/releases collide and users can't tell which build they have. Triggering only on tags prevents unwanted builds on every experimental branch commit.
+**Why Timestamps**: Multiple dev builds can happen on the same day. Without timestamps, tags/releases collide and users can't tell which build they have.
+
+**Why Trigger on Tags**: Triggering only on tags prevents unwanted builds on every experimental branch commit, giving explicit control over when dev releases are published.
+
+**Why Convert Hyphens**: Package managers (AUR, RPM, DEB) have strict version format requirements that prohibit hyphens. See the "Package Manager Version Constraints" gotcha in `adr-0001-known-gotchas.md` for full details.
 
 ---
 

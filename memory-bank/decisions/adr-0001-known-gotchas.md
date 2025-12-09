@@ -1261,5 +1261,75 @@ private static bool IsPrivateOrLocalIp(IPAddress ip)
 
 ---
 
+### 22. Ambiguous Type Reference (Directory)
+
+**The Bug**: `error CS0104: 'Directory' is an ambiguous reference between 'Soulseek.Directory' and 'System.IO.Directory'`
+
+**Files Affected**:
+- Any file that has both `using System.IO;` and `using Soulseek;`
+
+**What Happened**:
+When fixing the CreateDirectory bug (#20), I added code that used `Directory.Exists()` and `Directory.CreateDirectory()`. The compiler couldn't determine if this meant `System.IO.Directory` or `Soulseek.Directory` (which is a completely different type representing a Soulseek shared directory).
+
+**Why It Happened**:
+Both namespaces define a type called `Directory`:
+- `System.IO.Directory` - file system operations
+- `Soulseek.Directory` - Soulseek protocol type for shared directories
+
+When both namespaces are imported with `using`, the unqualified name `Directory` is ambiguous.
+
+**The Error**:
+```
+/home/runner/work/slskdn/slskdn/src/slskd/Transfers/MultiSource/Discovery/SourceDiscoveryService.cs(73,18): 
+error CS0104: 'Directory' is an ambiguous reference between 'Soulseek.Directory' and 'System.IO.Directory'
+```
+
+**The Fix**:
+Always fully qualify `Directory` when both namespaces are imported:
+
+```csharp
+// WRONG - ambiguous when both System.IO and Soulseek are imported:
+if (!Directory.Exists(slskdPath))
+{
+    Directory.CreateDirectory(slskdPath);
+}
+
+// CORRECT - fully qualified:
+if (!System.IO.Directory.Exists(slskdPath))
+{
+    System.IO.Directory.CreateDirectory(slskdPath);
+}
+```
+
+**Alternative Fix** (if you need both frequently):
+Add a using alias at the top of the file:
+```csharp
+using IODirectory = System.IO.Directory;
+
+// Then use:
+if (!IODirectory.Exists(slskdPath))
+{
+    IODirectory.CreateDirectory(slskdPath);
+}
+```
+
+**Prevention**:
+- When you see both `using System.IO;` and `using Soulseek;` in a file, **always** qualify `Directory`
+- Grep for this pattern before committing: `grep -n "using Soulseek" src/**/*.cs | grep -v "using System.IO"` won't help because they're often far apart
+- Better: Run `dotnet build` locally before pushing to catch these at compile time
+
+**Other Ambiguous Types in This Codebase**:
+- `Directory` (System.IO vs Soulseek)
+- `File` (System.IO vs Soulseek)
+- `Transfer` (slskd.Transfers.Transfer vs Soulseek.Transfer) - already resolved with `using Transfer = slskd.Transfers.Transfer;` in Events.cs
+
+**Quick Fix Command**:
+```bash
+# Find files that might have this issue:
+grep -l "using Soulseek" src/slskd/**/*.cs | xargs grep -l "Directory\.Exists\|Directory\.Create" | xargs sed -i 's/Directory\.Exists/System.IO.Directory.Exists/g; s/Directory\.Create/System.IO.Directory.Create/g'
+```
+
+---
+
 *Last updated: 2025-12-09*
 

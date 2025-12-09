@@ -70,9 +70,9 @@ namespace slskd.Transfers.MultiSource.Discovery
 
             // Store DB in the app data directory (not LocalApplicationData which can be /slskd in containers)
             var slskdPath = Path.Combine(appDirectory, "discovery");
-            if (!Directory.Exists(slskdPath))
+            if (!System.IO.Directory.Exists(slskdPath))
             {
-                Directory.CreateDirectory(slskdPath);
+                System.IO.Directory.CreateDirectory(slskdPath);
             }
 
             dbPath = Path.Combine(slskdPath, "discovery.db");

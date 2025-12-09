@@ -697,5 +697,75 @@ PKGVER="0.24.1.dev.${TIMESTAMP//-/}"  # Result: 0.24.1.dev.20251209204838
 
 ---
 
+## 14. Auto-Update README with Release Links
+
+Every dev and stable release MUST automatically update README.md installation links.
+
+**Why**: Users visiting GitHub should always see the latest download links without manual editing.
+
+**Pattern**: Add workflow step to update README.md before creating the release.
+
+### Dev Build Example
+
+```yaml
+- name: Update README with Latest Dev Build
+  run: |
+    # Extract version and tag info
+    TAG_NAME="${{ github.ref_name }}"
+    VERSION="${{ needs.build.outputs.dev_version }}"
+    
+    # Update README.md dev build section
+    sed -i '/<!-- BEGIN_DEV_BUILD -->/,/<!-- END_DEV_BUILD -->/c\
+    <!-- BEGIN_DEV_BUILD -->\
+    **[Development Build '"${TAG_NAME}"' →](https://github.com/snapetech/slskdn/releases/tag/'"${TAG_NAME}"')** \
+    \
+    Version: `'"${VERSION}"'` | Branch: `experimental/multi-source-swarm` \
+    \
+    ```bash\
+    # Installation commands...\
+    ```\
+    <!-- END_DEV_BUILD -->' README.md
+
+- name: Commit and Push README Update
+  run: |
+    git config user.name "github-actions[bot]"
+    git config user.email "github-actions[bot]@users.noreply.github.com"
+    
+    if git diff --quiet README.md; then
+      echo "No changes to README.md"
+    else
+      git add README.md
+      git commit -m "docs: update README with dev build $VERSION [skip ci]"
+      git push origin HEAD:experimental/multi-source-swarm
+    fi
+```
+
+**README.md Format**:
+
+```markdown
+### 🧪 Latest Development Build
+
+**⚠️ Unstable builds from experimental branches**
+
+<!-- BEGIN_DEV_BUILD -->
+**[Development Build dev-20251209-222346 →](https://github.com/snapetech/slskdn/releases/tag/dev-20251209-222346)**
+
+Version: `0.24.1-dev-20251209-222346` | Branch: `experimental/multi-source-swarm`
+
+```bash
+# Installation commands...
+```
+<!-- END_DEV_BUILD -->
+```
+
+**Key Points**:
+- Use HTML comments as markers for `sed` replacement
+- Include `[skip ci]` in commit message to prevent workflow loop
+- Always push to the source branch (`experimental/multi-source-swarm` for dev, `main` for stable)
+- Verify the change was applied with `grep -A 20 "BEGIN_DEV_BUILD" README.md`
+
+**Stable Releases**: Follow the same pattern but use `<!-- BEGIN_STABLE_RELEASE -->` and `<!-- END_STABLE_RELEASE -->` markers.
+
+---
 *Last updated: 2025-12-09*
 

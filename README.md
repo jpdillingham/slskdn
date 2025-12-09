@@ -69,7 +69,69 @@ Zero-trust security framework with defense-in-depth:
 
 ---
 
-## 🚀 Quick Start
+## 📦 Installation
+
+### Latest Stable Release
+
+**[Download v0.24.1-slskdn.27 →](https://github.com/snapetech/slskdn/releases/tag/v0.24.1-slskdn.27)**
+
+#### Linux Packages
+
+```bash
+# Arch Linux (AUR)
+yay -S slskdn
+
+# Fedora/RHEL (COPR)
+sudo dnf copr enable slskdn/slskdn
+sudo dnf install slskdn
+
+# Ubuntu/Debian (PPA)
+sudo add-apt-repository ppa:keefshape/slskdn
+sudo apt update
+sudo apt install slskdn
+
+# openSUSE (OBS)
+# Visit: https://software.opensuse.org/package/slskdn
+```
+
+#### Docker
+
+```bash
+docker pull ghcr.io/snapetech/slskdn:latest
+```
+
+---
+
+### 🧪 Latest Development Build
+
+**⚠️ Unstable builds from experimental branches**
+
+<!-- BEGIN_DEV_BUILD -->
+**[Development Build dev-20251209-222346 →](https://github.com/snapetech/slskdn/releases/tag/dev-20251209-222346)**
+
+Version: `0.24.1-dev-20251209-222346` | Branch: `experimental/multi-source-swarm`
+
+```bash
+# Arch Linux (AUR)
+yay -S slskdn-dev
+
+# Fedora/RHEL (COPR)
+sudo dnf copr enable slskdn/slskdn-dev
+sudo dnf install slskdn-dev
+
+# Ubuntu/Debian (PPA)
+sudo add-apt-repository ppa:keefshape/slskdn
+sudo apt update
+sudo apt install slskdn-dev
+
+# Docker
+docker pull ghcr.io/snapetech/slskdn:dev
+```
+<!-- END_DEV_BUILD -->
+
+---
+
+## 🚀 Quick Start (Build from Source)
 
 ```bash
 # Clone

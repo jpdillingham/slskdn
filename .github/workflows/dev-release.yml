@@ -105,6 +105,61 @@ jobs:
     permissions:
       contents: write
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 1
+
+      - name: Update README with Latest Dev Build
+        run: |
+          # Extract version and tag info
+          TAG_NAME="${{ github.ref_name }}"
+          VERSION="${{ needs.build.outputs.dev_version }}"
+          
+          # Update README.md dev build section
+          sed -i '/<!-- BEGIN_DEV_BUILD -->/,/<!-- END_DEV_BUILD -->/c\
+          <!-- BEGIN_DEV_BUILD -->\
+          **[Development Build '"${TAG_NAME}"' →](https://github.com/snapetech/slskdn/releases/tag/'"${TAG_NAME}"')** \
+          \
+          Version: `'"${VERSION}"'` | Branch: `experimental/multi-source-swarm` \
+          \
+          ```bash\
+          # Arch Linux (AUR)\
+          yay -S slskdn-dev\
+          \
+          # Fedora/RHEL (COPR)\
+          sudo dnf copr enable slskdn/slskdn-dev\
+          sudo dnf install slskdn-dev\
+          \
+          # Ubuntu/Debian (PPA)\
+          sudo add-apt-repository ppa:keefshape/slskdn\
+          sudo apt update\
+          sudo apt install slskdn-dev\
+          \
+          # Docker\
+          docker pull ghcr.io/snapetech/slskdn:dev\
+          ```\
+          <!-- END_DEV_BUILD -->' README.md
+          
+          # Verify the change
+          echo "📝 Updated README.md with build ${VERSION}"
+          grep -A 20 "BEGIN_DEV_BUILD" README.md
+
+      - name: Commit and Push README Update
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          
+          if git diff --quiet README.md; then
+            echo "No changes to README.md"
+          else
+            git add README.md
+            git commit -m "docs: update README with dev build ${{ needs.build.outputs.dev_version }} [skip ci]"
+            git push origin HEAD:experimental/multi-source-swarm
+            echo "✅ README.md updated and pushed"
+          fi
+
       - name: Download Build Artifact
         uses: actions/download-artifact@v4
         with:

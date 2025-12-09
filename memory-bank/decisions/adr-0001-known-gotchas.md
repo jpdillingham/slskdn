@@ -900,5 +900,40 @@ ARCH_VERSION=$(echo "$DEV_VERSION" | sed 's/-/./g')
 
 ---
 
+## Integration Test Project Missing Project Reference
+
+**The Problem**: Docker builds fail with `error CS0234: The type or namespace name 'Common' does not exist in the namespace 'slskd'` when building integration tests.
+
+**Root Cause**: The `tests/slskd.Tests.Integration/slskd.Tests.Integration.csproj` file was missing a `<ProjectReference>` to the main `src/slskd/slskd.csproj` project.
+
+**Error Message**:
+```
+/slskd/tests/slskd.Tests.Integration/SecurityIntegrationTests.cs(10,13): error CS0234: 
+The type or namespace name 'Common' does not exist in the namespace 'slskd' 
+(are you missing an assembly reference?) [/slskd/tests/slskd.Tests.Integration/slskd.Tests.Integration.csproj]
+```
+
+**Why This Breaks**:
+1. Integration tests need to reference types from the main project (`slskd.Common.Security`, etc.)
+2. Without a `<ProjectReference>`, the compiler can't find any `slskd.*` namespaces
+3. This fails silently in local builds if you've previously built the main project (DLL is in bin/), but ALWAYS fails in Docker/CI clean builds
+
+**The Fix**:
+```xml
+<!-- tests/slskd.Tests.Integration/slskd.Tests.Integration.csproj -->
+<ItemGroup>
+  <ProjectReference Include="../../src/slskd/slskd.csproj" />
+</ItemGroup>
+```
+
+**Prevention**:
+- When creating ANY test project, ALWAYS add a `<ProjectReference>` to the code being tested
+- Test in Docker before committing: `docker build -f Dockerfile .`
+- Check .csproj files when you see "namespace does not exist" errors in CI
+
+**Related**: This is especially insidious because local `dotnet build` might work if you've built the main project before, masking the missing reference until CI runs.
+
+---
+
 *Last updated: 2025-12-09*
 

@@ -1,5 +1,7 @@
 # ADR-0003: Anti-Slop Rules
 
+> **Includes CLI efficiency rules** - applies to terminal commands too!
+
 > **Status**: Active  
 > **Date**: 2025-12-08  
 > **Purpose**: Explicit list of things AI models keep doing wrong
@@ -775,6 +777,100 @@ public class User
 8. **Comment why, not what** - code should be self-documenting
 9. **One thing per commit** - atomic, focused changes
 10. **Test the happy path** - don't over-test edge cases that can't happen
+
+---
+
+## Rule 31: CLI - Prefer Chaining Over Sequential Commands
+
+**Problem**: AI runs commands one at a time, leaving resources hanging.
+
+**Slop**:
+```bash
+# Separate commands, wasteful
+dotnet build
+dotnet test
+./bin/lint
+```
+
+**Correct**:
+```bash
+# Chained - stops on first failure
+dotnet build && dotnet test && ./bin/lint
+
+# Parallel when independent
+dotnet build & npm --prefix src/web run build & wait
+
+# Piped for filtering
+gh run list --limit 10 | grep -i fail | head -3
+```
+
+---
+
+## Rule 32: CLI - Don't Repeat Commands When One Suffices
+
+**Problem**: AI runs multiple similar commands instead of combining.
+
+**Slop**:
+```bash
+grep "error" file.log
+grep "warning" file.log
+grep "fatal" file.log
+```
+
+**Correct**:
+```bash
+# Single grep with alternation
+grep -E "error|warning|fatal" file.log
+
+# Or with multiple patterns
+grep -e "error" -e "warning" -e "fatal" file.log
+```
+
+---
+
+## Rule 33: CLI - Use Subshells for Directory Changes
+
+**Problem**: AI changes directory then forgets to change back.
+
+**Slop**:
+```bash
+cd src/web
+npm install
+npm run build
+cd ../..  # Easy to forget
+```
+
+**Correct**:
+```bash
+# Subshell - automatically returns to original dir
+(cd src/web && npm install && npm run build)
+
+# Or use --prefix for npm
+npm --prefix src/web install && npm --prefix src/web run build
+```
+
+---
+
+## Rule 34: CLI - Combine Find/Grep Operations
+
+**Problem**: AI iterates manually when find can do it.
+
+**Slop**:
+```bash
+files=$(find . -name "*.cs")
+for f in $files; do
+  grep -l "TODO" "$f"
+done
+```
+
+**Correct**:
+```bash
+# Single command
+find . -name "*.cs" -exec grep -l "TODO" {} +
+
+# Or with xargs for better performance
+find . -name "*.cs" | xargs grep -l "TODO"
+```
 
 ---
 

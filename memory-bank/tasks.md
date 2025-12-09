@@ -125,7 +125,27 @@
   - Status: Done (Release .8)
   - Notes: Ntfy, Pushover, Pushbullet
 
+- [x] **T-110**: HashDb Schema Migration System
+  - Status: Done (dev-2025-12-09)
+  - Branch: experimental/multi-source-swarm
+  - Notes: Versioned SQLite migrations for HashDb, extends schema for full file hashes, audio fingerprints, MusicBrainz IDs, and FileSources table
+
+- [x] **T-111**: Passive FLAC Discovery & Backfill
+  - Status: Done (dev-2025-12-09)
+  - Branch: experimental/multi-source-swarm
+  - Notes: Passively discover FLACs from search results, peer interactions. Manual backfill UI with pagination. Network-health-first design.
+
+- [x] **T-112**: UI Polish - Sticky Status Bar & Footer
+  - Status: Done (dev-2025-12-09)
+  - Branch: experimental/multi-source-swarm
+  - Notes: Status bar fixed below nav, opaque colorful footer with parent project attribution, appears on all pages including login
+
+- [x] **T-113**: Release Notes & AUR Checksum Fix
+  - Status: Done (dev-2025-12-09)
+  - Branch: experimental/multi-source-swarm
+  - Notes: Established convention for release notes on GitHub releases. Fixed AUR PKGBUILD to keep SKIP for binary checksums to prevent yay -Syu validation failures.
+
 ---
 
-*Last updated: December 8, 2025*
+*Last updated: December 9, 2025*
 

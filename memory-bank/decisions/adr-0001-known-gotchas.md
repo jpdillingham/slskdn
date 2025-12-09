@@ -972,5 +972,48 @@ gh release download dev \
 
 ---
 
+## Building RPM Packages on Ubuntu Fails with Missing BuildRequires
+
+**The Problem**: The `packages` job fails when trying to build .rpm packages on Ubuntu with "Failed build dependencies: systemd-rpm-macros is needed".
+
+**Root Cause**: The RPM spec file has `BuildRequires: systemd-rpm-macros` and `BuildRequires: unzip`, which are Fedora packages not available in Ubuntu's apt repositories. You can't build RPMs on Ubuntu that require Fedora-specific build tools.
+
+**Error Message**:
+```
+error: Failed build dependencies:
+	systemd-rpm-macros is needed by slskdn-dev-0.24.1.dev.20251209.213134-1.x86_64
+	unzip is needed by slskdn-dev-0.24.1.dev.20251209.213134-1.x86_64
+```
+
+**Why This Breaks**:
+1. RPM spec files can have `BuildRequires` for Fedora-specific packages
+2. Ubuntu (apt) doesn't have `systemd-rpm-macros` or the exact versions of build tools RPM expects
+3. The `rpmbuild` command on Ubuntu can't satisfy these dependencies
+4. Cross-distro package building requires containers or native build environments
+
+**The Fix**:
+Don't build RPMs on Ubuntu. Let COPR (which runs on Fedora) handle RPM builds. The `packages` job should only build .deb:
+
+```yaml
+packages:
+  name: Build .deb Package  # Changed from "Build Packages (.deb and .rpm)"
+  # ... only build .deb, remove all RPM build steps
+```
+
+**Correct Architecture**:
+- **AUR job**: Builds Arch packages (runs on Arch via Docker)
+- **COPR job**: Builds RPM packages (runs on Fedora infrastructure)
+- **PPA job**: Builds Debian packages (runs on Ubuntu/Launchpad)  
+- **Packages job**: Builds .deb for direct GitHub download (Ubuntu is fine)
+- **Docker job**: Builds container images (distro-agnostic)
+
+**Prevention**:
+- Ubuntu can build .deb natively
+- Fedora (COPR) should build .rpm natively
+- Don't try to build distro-specific packages on the wrong distro
+- If you need RPMs as GitHub release assets, download them from COPR after it builds
+
+---
+
 *Last updated: 2025-12-09*
 

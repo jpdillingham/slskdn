@@ -527,7 +527,7 @@ jobs:
           cache-to: type=gha,mode=max
 
   packages:
-    name: Build Packages (.deb and .rpm)
+    name: Build .deb Package
     runs-on: ubuntu-latest
     needs: [build, release]
     steps:
@@ -548,7 +548,7 @@ jobs:
       - name: Install Build Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y devscripts debhelper fakeroot build-essential rpm
+          sudo apt-get install -y devscripts debhelper fakeroot build-essential
 
       - name: Prepare Package Structure
         run: |
@@ -580,40 +580,11 @@ jobs:
           echo "DEB_FILE=$DEB_FILE" >> $GITHUB_ENV
           ls -lh "$DEB_FILE"
 
-      - name: Build .rpm Package  
-        run: |
-          # Create RPM build environment
-          mkdir -p ~/rpmbuild/{BUILD,RPMS,SOURCES,SPECS,SRPMS}
-          
-          # Convert version for RPM (replace ALL hyphens with dots)
-          RPM_VERSION=$(echo "${{ needs.build.outputs.dev_version }}" | sed 's/-/./g')
-          
-          # Copy sources
-          cp -r slskdn-build ~/rpmbuild/BUILD/slskdn-dev-${RPM_VERSION}
-          cp packaging/aur/slskd.service ~/rpmbuild/SOURCES/
-          cp packaging/aur/slskd.yml ~/rpmbuild/SOURCES/
-          cp packaging/aur/slskd.sysusers ~/rpmbuild/SOURCES/slskd.conf
-          
-          # Update spec for dev build
-          sed "s/^Name:.*/Name:           slskdn-dev/" packaging/rpm/slskdn.spec > ~/rpmbuild/SPECS/slskdn-dev.spec
-          sed -i "s/^Version:.*/Version:        ${RPM_VERSION}/" ~/rpmbuild/SPECS/slskdn-dev.spec
-          
-          # Build RPM
-          rpmbuild -bb ~/rpmbuild/SPECS/slskdn-dev.spec
-          
-          # Find and move RPM
-          RPM_FILE="slskdn-dev-${RPM_VERSION}.x86_64.rpm"
-          find ~/rpmbuild/RPMS -name "*.rpm" -exec cp {} "$RPM_FILE" \;
-          echo "RPM_FILE=$RPM_FILE" >> $GITHUB_ENV
-          ls -lh "$RPM_FILE"
-
-      - name: Upload Packages to Release
+      - name: Upload .deb to Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: dev
-          files: |
-            ${{ env.DEB_FILE }}
-            ${{ env.RPM_FILE }}
+          files: ${{ env.DEB_FILE }}
 
   notify:
     name: Notify

@@ -1,10 +1,10 @@
 name: Dev Release (AUR + COPR)
 
-# Build and push -dev packages on experimental branch commits
+# Build and push -dev packages only when explicitly tagged
 on:
   push:
-    branches:
-      - experimental/multi-source-swarm
+    tags:
+      - 'dev-*'
   workflow_dispatch:
     inputs:
       force_build:

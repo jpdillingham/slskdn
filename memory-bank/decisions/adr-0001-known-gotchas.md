@@ -1054,5 +1054,41 @@ slskdn-dev (${DEB_VERSION}-1ppa${PPA_REV}~jammy) jammy; urgency=medium
 
 ---
 
+## Yay Cache Contains Stale PKGBUILD After AUR Fix
+
+**The Problem**: After fixing the AUR workflow to keep `SKIP` for the binary checksum, `yay -S slskdn-dev` still fails with "One or more files did not pass the validity check!" even though the AUR repo has the correct PKGBUILD.
+
+**Root Cause**: Yay caches PKGBUILDs in `~/.cache/yay/package-name/`. If the cached PKGBUILD is from a previous (broken) workflow run that had a real hash instead of `SKIP`, yay will use the stale cached version instead of fetching the fixed one from AUR.
+
+**Error Message**:
+```
+==> Validating source files with sha256sums...
+    slskdn-dev-linux-x64.zip ... FAILED
+==> ERROR: One or more files did not pass the validity check!
+```
+
+**Why This Happens**:
+1. Old workflow pushed PKGBUILD with `sha256sums=('abc123...' 'SKIP' 'SKIP' 'SKIP')`
+2. User ran `yay -S package-name` and yay cached that broken PKGBUILD
+3. Workflow was fixed to preserve `SKIP` in the template
+4. New correct PKGBUILD pushed to AUR: `sha256sums=('SKIP' '9e2f4b...' 'a170af...' '28b6c2...')`
+5. User runs `yay -S package-name` again, but yay uses the CACHED broken version
+6. Checksum fails because the binary has changed but cached PKGBUILD has the old hash
+
+**The Fix**:
+Clear yay's cache for the package:
+
+```bash
+rm -rf ~/.cache/yay/package-name
+yay -S package-name  # Will fetch fresh PKGBUILD from AUR
+```
+
+**Prevention**:
+- When testing AUR packages during development, always clear cache after workflow fixes
+- Add this to testing docs: "If you previously tested a broken build, clear yay cache first"
+- Yay's cache is helpful for normal use but can hide fixes during rapid iteration
+
+---
+
 *Last updated: 2025-12-09*
 

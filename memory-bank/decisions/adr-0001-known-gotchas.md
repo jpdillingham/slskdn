@@ -587,5 +587,24 @@ Note: TWO spaces before `--`, specific date format.
 
 ---
 
-*Last updated: 2025-12-08*
+### 19. HashDb Not Populated - Missing Event Subscription
+
+**The Bug**: HashDb was initializing but `seq_id` stayed at 0 because no code was hashing downloaded files.
+
+**Files Affected**:
+- `src/slskd/HashDb/HashDbService.cs`
+- `src/slskd/Program.cs`
+
+**Root Cause**: The `ContentVerificationService` only hashes files during multi-source downloads. Regular single-source downloads raised `DownloadFileCompleteEvent` but nothing subscribed to hash the file.
+
+**Fix**: Subscribe `HashDbService` to `DownloadFileCompleteEvent` and hash downloaded files:
+```csharp
+eventBus.Subscribe<DownloadFileCompleteEvent>("HashDbService.DownloadComplete", OnDownloadCompleteAsync);
+```
+
+**Why This Happened**: The hashing logic was only implemented in the multi-source path, not the common download completion path.
+
+---
+
+*Last updated: 2025-12-09*
 

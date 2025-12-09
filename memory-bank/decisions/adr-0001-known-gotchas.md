@@ -810,5 +810,50 @@ grep -rl "IMyService\|MyService" src/slskd/MyFeature/
 
 ---
 
+### 24. AUR PKGBUILD Checksums - NEVER Replace SKIP
+
+**The Bug**: The AUR workflow was calculating the sha256 of `slskdn-dev-linux-x64.zip` and replacing the entire `sha256sums` array, overwriting `SKIP` with the calculated hash. This causes validation failures on `yay -Syu` because the zip changes every build.
+
+**What Was Happening**:
+```bash
+# PKGBUILD template (CORRECT):
+sha256sums=('SKIP' '9e2f4b...' 'a170af...' '28b6c2...')
+#           ^^^^   ^^^^^^^^   ^^^^^^^^   ^^^^^^^^
+#           zip    service    yml        sysusers
+#          (changes) (static)  (static)  (static)
+
+# Workflow was replacing it with (WRONG):
+sha256sums=('abc123...' 'SKIP' 'SKIP' 'SKIP')
+#           ^^^^^^^^^^
+#           Calculated hash for zip - breaks on next download!
+```
+
+**Why This Breaks**:
+1. CI builds `slskdn-dev-linux-x64.zip` and calculates hash `abc123...`
+2. Workflow updates AUR PKGBUILD with `sha256sums=('abc123...' ...)`
+3. User runs `yay -S slskdn-dev` → works (zip matches hash)
+4. CI rebuilds zip → new hash `def456...`
+5. User runs `yay -Syu` → **FAILS** (cached zip has hash `abc123...`, PKGBUILD expects `abc123...`, but downloaded zip is `def456...`)
+
+**The Fix**:
+```bash
+# DON'T calculate or replace the zip hash in the workflow
+# The PKGBUILD template already has SKIP for index 0
+
+# OLD (wrong):
+sed -i "s/sha256sums=.*/sha256sums=('$SHA256' 'SKIP' 'SKIP' 'SKIP')/" PKGBUILD
+
+# NEW (correct):
+# Just update pkgver and _commit, leave sha256sums alone
+sed -i "s/^pkgver=.*/pkgver=${VERSION}/" PKGBUILD
+sed -i "s/^_commit=.*/_commit=${COMMIT}/" PKGBUILD
+```
+
+**Rule**: For AUR packages that download release binaries (not source), the first entry in `sha256sums` MUST be `'SKIP'` because the binary changes every build. Only static files (service files, configs) get real checksums.
+
+**Related**: See gotcha #13 "SKIP vs Actual Hash in AUR" for more context on why this pattern exists.
+
+---
+
 *Last updated: 2025-12-09*
 

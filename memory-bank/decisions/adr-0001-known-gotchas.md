@@ -1121,5 +1121,145 @@ await context.Searches.CountAsync(s => s.StartedAt < lastProcessedAt.Value.UtcDa
 
 ---
 
+### 20. CreateDirectory on Existing File Path
+
+**The Bug**: `System.IO.IOException: The file '/slskd/slskd' already exists` when trying to create a directory at a path that's already occupied by a file (the binary itself).
+
+**Files Affected**:
+- `src/slskd/Transfers/MultiSource/Discovery/SourceDiscoveryService.cs`
+- `src/slskd/Program.cs`
+
+**What Happened**:
+`SourceDiscoveryService` used `Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData)` which returns `/slskd` in Docker containers. It then tried to `CreateDirectory("/slskd/slskd")` to store the discovery database, but `/slskd/slskd` is the binary executable file, not a directory. This caused a crash on every API request that needed `SourceDiscoveryService`.
+
+**Why It Happened**:
+1. `LocalApplicationData` is not reliable in containers - can return unexpected paths
+2. No check for whether the path is a file vs directory before calling `CreateDirectory()`
+3. Different behavior than other services which use `Program.AppDirectory`
+
+**The Error**:
+```
+System.IO.IOException: The file '/slskd/slskd' already exists.
+  at System.IO.FileSystem.CreateDirectory(String fullPath, UnixFileMode unixCreateMode)
+  at System.IO.Directory.CreateDirectory(String path)
+  at slskd.Transfers.MultiSource.Discovery.SourceDiscoveryService..ctor(...)
+```
+
+**The Fix**:
+Use `Program.AppDirectory` (like all other services) and create a subdirectory:
+
+```csharp
+// WRONG - uses unreliable LocalApplicationData
+var appDataPath = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+var slskdPath = Path.Combine(appDataPath, "slskd");
+System.IO.Directory.CreateDirectory(slskdPath); // CRASHES if /slskd/slskd is a file!
+
+// CORRECT - use Program.AppDirectory and create subdirectory
+public SourceDiscoveryService(
+    string appDirectory,  // Injected via DI
+    ISoulseekClient soulseekClient,
+    IContentVerificationService verificationService)
+{
+    var slskdPath = Path.Combine(appDirectory, "discovery");
+    if (!Directory.Exists(slskdPath))
+    {
+        Directory.CreateDirectory(slskdPath);
+    }
+    dbPath = Path.Combine(slskdPath, "discovery.db");
+}
+
+// Update DI registration to pass Program.AppDirectory
+services.AddSingleton<ISourceDiscoveryService>(sp => new SourceDiscoveryService(
+    Program.AppDirectory,
+    sp.GetRequiredService<ISoulseekClient>(),
+    sp.GetRequiredService<Transfers.MultiSource.IContentVerificationService>()));
+```
+
+**Prevention**:
+- **ALWAYS** use `Program.AppDirectory` for data storage, never `LocalApplicationData`
+- **ALWAYS** create a subdirectory for each service's data (e.g., `discovery/`, `ranking/`, `hashdb/`)
+- **ALWAYS** check `Directory.Exists()` before `CreateDirectory()` when the path might vary
+- Pattern to follow: `Path.Combine(Program.AppDirectory, "myservice")` → creates `/app/myservice/` in containers
+
+**Related Pattern**:
+```csharp
+// Good examples from the codebase:
+var rankingDbPath = Path.Combine(Program.AppDirectory, "ranking.db");
+var hashDbService = new HashDbService(Program.AppDirectory, ...);
+var wishlistDbPath = Path.Combine(Program.AppDirectory, "wishlist.db");
+```
+
+---
+
+### 21. Scanner Detection Noise from Private IPs
+
+**The Bug**: Logs spammed with hundreds of "Scanner detected from 192.168.1.77" warnings when users access the web UI from their LAN.
+
+**Files Affected**:
+- `src/slskd/Common/Security/FingerprintDetection.cs`
+- `src/slskd/Common/Security/SecurityMiddleware.cs` (partial fix)
+
+**What Happened**:
+The web UI polls multiple API endpoints rapidly (~5-10 requests/second), which triggered the reconnaissance detection system. Even after fixing `SecurityMiddleware` to skip `RecordConnection()` for private IPs, old profiles from before the fix were still marked as scanners, and the logging still fired.
+
+**Why It Happened**:
+1. Web UI makes many rapid API calls (status bar, capabilities, DHT, mesh, hashdb, backfill stats, etc.)
+2. This looks like port scanning / reconnaissance to `FingerprintDetection`
+3. First fix: `SecurityMiddleware` skipped `RecordConnection()` for private IPs (lines 103-110)
+4. But old profiles from before the fix were still in memory as flagged scanners
+5. `FingerprintDetection.RecordConnection()` logged warnings for those old profiles
+
+**The Error**:
+```
+20:09:16  WRN  Scanner detected from "192.168.1.77": "PortScanning, RapidConnections
+20:09:26  WRN  Scanner detected from "192.168.1.77": "PortScanning, RapidConnections
+20:09:36  WRN  Scanner detected from "192.168.1.77": "PortScanning, RapidConnections
+... (repeats hundreds of times)
+```
+
+**The Fix**:
+Add private IP check to `FingerprintDetection` itself, not just `SecurityMiddleware`:
+
+```csharp
+// In FingerprintDetection.RecordConnection():
+if (profile.IsScanner)
+{
+    // Don't log warnings for private/local IPs (e.g., web UI polling APIs rapidly)
+    if (!IsPrivateOrLocalIp(ip))
+    {
+        _logger.LogWarning(
+            "Scanner detected from {Ip}: {Indicators}",
+            ip,
+            string.Join(", ", indicators.Select(i => i.Type)));
+
+        ReconnaissanceDetected?.Invoke(this, new ReconnaissanceEventArgs(evt));
+    }
+}
+
+// Add helper method (same as SecurityMiddleware):
+private static bool IsPrivateOrLocalIp(IPAddress ip)
+{
+    // Check for 192.168.x.x, 10.x.x.x, 172.16-31.x.x, 127.x.x.x, fe80::/10, fc00::/7
+    // ... (full implementation in code)
+}
+```
+
+**Prevention**:
+- Security logging should **always** check for private IPs before emitting warnings
+- Private IP checks should be at **both** the middleware layer (prevent tracking) **and** the service layer (prevent logging)
+- Web UI polling is legitimate behavior - don't treat LAN clients as threats
+- Test security features with both public and private IPs
+
+**Why Two Fixes Were Needed**:
+1. **SecurityMiddleware fix**: Prevents NEW profiles from being created for private IPs
+2. **FingerprintDetection fix**: Prevents logging warnings for OLD profiles (already flagged)
+3. Both layers need the check to fully eliminate noise
+
+**Private IP Ranges**:
+- IPv4: `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `169.254.0.0/16`, `127.0.0.0/8`
+- IPv6: `fe80::/10` (link-local), `fc00::/7` (unique local), `::1` (loopback)
+
+---
+
 *Last updated: 2025-12-09*
 

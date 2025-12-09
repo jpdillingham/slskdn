@@ -626,5 +626,37 @@ public void Calculate_EdgeCases_ShouldWork(int value, MyService sut)
 
 ---
 
-*Last updated: 2025-12-08*
+## 13. Dev Build Naming Convention
+
+Dev builds MUST include timestamps to differentiate multiple builds on the same day.
+
+**Format**: `dev-YYYYMMDD-HHMMSS`
+
+**Example**: `dev-20251209-135823` (December 9, 2025 at 13:58:23)
+
+**Where This Applies**:
+- Git tag name: `dev-20251209-135823`
+- Release filename: `slskdn-dev-20251209-135823-linux-x64.zip`
+- GitHub release title: `Dev Build 20251209-135823`
+- PKGBUILD pkgver: `0.24.1.dev.20251209135823`
+- Release notes header: `dev-20251209-135823`
+
+**Workflow Implementation**:
+```bash
+# Generate timestamp
+TIMESTAMP=$(date -u +%Y%m%d-%H%M%S)
+TAG="dev-${TIMESTAMP}"
+
+# Use in filenames
+ZIP="slskdn-dev-${TIMESTAMP}-linux-x64.zip"
+
+# Use in AUR
+PKGVER="0.24.1.dev.${TIMESTAMP//-/}"  # Remove hyphen: 20251209135823
+```
+
+**Why**: Multiple dev builds can happen on the same day. Without timestamps, tags/releases collide and users can't tell which build they have.
+
+---
+
+*Last updated: 2025-12-09*
 

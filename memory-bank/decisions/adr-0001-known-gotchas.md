@@ -855,5 +855,50 @@ sed -i "s/^_commit=.*/_commit=${COMMIT}/" PKGBUILD
 
 ---
 
+## Package Manager Version Constraints
+
+**The Problem**: AUR and RPM package managers don't allow hyphens in version strings, causing build failures.
+
+**Error Messages**:
+```
+# AUR:
+==> ERROR: pkgver is not allowed to contain colons, forward slashes, hyphens or whitespace.
+
+# RPM:
+error: line 2: Illegal char '-' (0x2d) in: Version: 0.24.1-dev-20251209-203936
+```
+
+**Why This Happens**:
+Our dev builds use the format `0.24.1-dev-20251209-203936` (with hyphens). This works fine for Git tags and GitHub releases, but AUR and RPM have strict version format requirements:
+- AUR `pkgver`: No hyphens, colons, slashes, or whitespace
+- RPM `Version`: No hyphens (hyphen is reserved for separating version from release number)
+
+**The Fix**:
+Convert ALL hyphens to dots when generating package versions:
+
+```bash
+# Git/GitHub (hyphens OK):
+DEV_VERSION="0.24.1-dev-20251209-203936"
+
+# AUR/RPM/DEB (convert to dots):
+ARCH_VERSION=$(echo "$DEV_VERSION" | sed 's/-/./g')
+# Result: 0.24.1.dev.20251209.203936
+```
+
+**CRITICAL**: Use `sed 's/-/./g'` (global replace) NOT `sed 's/-/./'` (only first hyphen)!
+
+**Where This Applies**:
+- AUR PKGBUILD: `pkgver=0.24.1.dev.20251209.203936`
+- RPM spec: `Version: 0.24.1.dev.20251209.203936`
+- Debian changelog: `slskdn-dev (0.24.1.dev.20251209.203936-1)`
+- Package filenames: `slskdn-dev_0.24.1.dev.20251209.203936_amd64.deb`
+
+**Git Tag and Zip Stay Original**:
+- Git tag: `dev-20251209-203936` (hyphens OK)
+- Zip file: `slskdn-dev-20251209-203936-linux-x64.zip` (hyphens OK)
+- GitHub release title: `Dev Build 20251209-203936` (hyphens OK)
+
+---
+
 *Last updated: 2025-12-09*
 

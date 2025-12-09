@@ -232,8 +232,9 @@ jobs:
           cp ../packaging/aur/PKGBUILD-dev PKGBUILD
           cp ../packaging/aur/slskd.install slskd.install
           
-          # Convert version for Arch (replace - with .)
-          ARCH_VERSION=$(echo "${{ needs.build.outputs.dev_version }}" | sed 's/-/./')
+          # Convert version for Arch (replace ALL hyphens with dots)
+          # 0.24.1-dev-20251209-203936 → 0.24.1.dev.20251209.203936
+          ARCH_VERSION=$(echo "${{ needs.build.outputs.dev_version }}" | sed 's/-/./g')
           
           # Update version and commit (keep sha256sums as-is with SKIP for the zip)
           sed -i "s/^pkgver=.*/pkgver=${ARCH_VERSION}/" PKGBUILD
@@ -309,8 +310,9 @@ jobs:
           # Use the dev spec template
           cp packaging/rpm/slskdn-dev.spec ~/rpmbuild/SPECS/
           
-          # Convert version for RPM (replace - with .)
-          RPM_VERSION=$(echo "${{ needs.build.outputs.dev_version }}" | sed 's/-/./')
+          # Convert version for RPM (replace ALL hyphens with dots)
+          # 0.24.1-dev-20251209-203936 → 0.24.1.dev.20251209.203936
+          RPM_VERSION=$(echo "${{ needs.build.outputs.dev_version }}" | sed 's/-/./g')
           
           # Update version
           sed -i "s/^Version:.*/Version:        ${RPM_VERSION}/" ~/rpmbuild/SPECS/slskdn-dev.spec
@@ -566,42 +568,52 @@ jobs:
       - name: Build .deb Package
         run: |
           cd pkg
-          VERSION="${{ needs.build.outputs.dev_version }}"
-          sed -i "s/slskdn (.*)/slskdn-dev (${VERSION}-1) unstable; urgency=medium/" debian/changelog
+          # Convert version for Debian (replace ALL hyphens with dots)
+          DEB_VERSION=$(echo "${{ needs.build.outputs.dev_version }}" | sed 's/-/./g')
+          sed -i "s/slskdn (.*)/slskdn-dev (${DEB_VERSION}-1) unstable; urgency=medium/" debian/changelog
           sed -i "s/^Source: slskdn$/Source: slskdn-dev/" debian/control
           sed -i "s/^Package: slskdn$/Package: slskdn-dev/" debian/control
           dpkg-buildpackage -us -uc -b
           cd ..
-          mv *.deb slskdn-dev_${{ needs.build.outputs.dev_version }}_amd64.deb
+          DEB_FILE="slskdn-dev_${DEB_VERSION}_amd64.deb"
+          mv *.deb "$DEB_FILE"
+          echo "DEB_FILE=$DEB_FILE" >> $GITHUB_ENV
+          ls -lh "$DEB_FILE"
 
       - name: Build .rpm Package  
         run: |
           # Create RPM build environment
           mkdir -p ~/rpmbuild/{BUILD,RPMS,SOURCES,SPECS,SRPMS}
           
+          # Convert version for RPM (replace ALL hyphens with dots)
+          RPM_VERSION=$(echo "${{ needs.build.outputs.dev_version }}" | sed 's/-/./g')
+          
           # Copy sources
-          cp -r slskdn-build ~/rpmbuild/BUILD/slskdn-dev-${{ needs.build.outputs.dev_version }}
+          cp -r slskdn-build ~/rpmbuild/BUILD/slskdn-dev-${RPM_VERSION}
           cp packaging/aur/slskd.service ~/rpmbuild/SOURCES/
           cp packaging/aur/slskd.yml ~/rpmbuild/SOURCES/
           cp packaging/aur/slskd.sysusers ~/rpmbuild/SOURCES/slskd.conf
           
           # Update spec for dev build
           sed "s/^Name:.*/Name:           slskdn-dev/" packaging/rpm/slskdn.spec > ~/rpmbuild/SPECS/slskdn-dev.spec
-          sed -i "s/^Version:.*/Version:        ${{ needs.build.outputs.dev_version }}/" ~/rpmbuild/SPECS/slskdn-dev.spec
+          sed -i "s/^Version:.*/Version:        ${RPM_VERSION}/" ~/rpmbuild/SPECS/slskdn-dev.spec
           
           # Build RPM
           rpmbuild -bb ~/rpmbuild/SPECS/slskdn-dev.spec
           
           # Find and move RPM
-          find ~/rpmbuild/RPMS -name "*.rpm" -exec cp {} slskdn-dev-${{ needs.build.outputs.dev_version }}.x86_64.rpm \;
+          RPM_FILE="slskdn-dev-${RPM_VERSION}.x86_64.rpm"
+          find ~/rpmbuild/RPMS -name "*.rpm" -exec cp {} "$RPM_FILE" \;
+          echo "RPM_FILE=$RPM_FILE" >> $GITHUB_ENV
+          ls -lh "$RPM_FILE"
 
       - name: Upload Packages to Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: dev
           files: |
-            slskdn-dev_${{ needs.build.outputs.dev_version }}_amd64.deb
-            slskdn-dev-${{ needs.build.outputs.dev_version }}.x86_64.rpm
+            ${{ env.DEB_FILE }}
+            ${{ env.RPM_FILE }}
 
   notify:
     name: Notify
